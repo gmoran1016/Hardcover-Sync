@@ -227,91 +227,55 @@ class StorygraphSync:
     def _do_update_progress(
         self, pages: int | None, pct: float | None, total_pages: int | None
     ) -> bool:
-        """Open the progress widget on a StoryGraph book page and submit progress."""
+        """Click Track progress, fill the confirmed form fields, submit."""
+        try:
+            wait = WebDriverWait(self.driver, 8)
 
-        # --- Try to open a progress/reading-status dropdown or form ---
-        trigger_selectors = [
-            (By.XPATH, '//button[contains(normalize-space(.), "Update progress")]'),
-            (By.XPATH, '//button[contains(normalize-space(.), "Log progress")]'),
-            (By.XPATH, '//a[contains(normalize-space(.), "Update progress")]'),
-            (By.CSS_SELECTOR, "button.expand-dropdown-button"),
-            # "Reading" status buttons that expand a journal entry form
-            (By.XPATH, '//button[contains(normalize-space(.), "currently reading") '
-                        'or contains(normalize-space(.), "Currently Reading")]'),
-        ]
+            # "Track progress" is the confirmed button class on the StoryGraph book page
+            track_btn = wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".track-progress-button"))
+            )
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", track_btn)
+            self.driver.execute_script("arguments[0].click();", track_btn)
+            time.sleep(1)
 
-        for by, sel in trigger_selectors:
-            try:
-                el = self.driver.find_element(by, sel)
-                if el.is_displayed():
-                    self.driver.execute_script("arguments[0].scrollIntoView(true);", el)
-                    el.click()
-                    time.sleep(1)
-                    logger.debug("Opened StoryGraph progress widget via: %s", sel)
-                    break
-            except NoSuchElementException:
-                continue
+            # Confirmed field: read_status[progress_number] (type=number) = pages read
+            progress_input = wait.until(
+                EC.presence_of_element_located((
+                    By.CSS_SELECTOR, "input#read_status_progress_number",
+                ))
+            )
 
-        # --- Fill in the progress form ---
-        # StoryGraph typically offers a pages or percent field
-        if pages is not None:
-            page_selectors = [
-                'input[name*="page"]',
-                'input[id*="page"]',
-                'input[placeholder*="page" i]',
-                "input[type='number']",
-            ]
-            for sel in page_selectors:
-                try:
-                    inp = self.driver.find_element(By.CSS_SELECTOR, sel)
-                    if inp.is_displayed():
-                        inp.clear()
-                        inp.send_keys(str(pages))
-                        if self._submit_form():
-                            logger.info("StoryGraph progress saved: %d pages", pages)
-                            return True
-                except NoSuchElementException:
-                    continue
+            if pages is not None:
+                progress_input.clear()
+                progress_input.send_keys(str(pages))
+            elif pct is not None and total_pages:
+                calculated = int(total_pages * pct / 100)
+                progress_input.clear()
+                progress_input.send_keys(str(calculated))
+            else:
+                logger.warning("No pages or percent available for StoryGraph update")
+                return False
 
-        # Fallback: percentage
-        if pct is not None:
-            pct_selectors = [
-                'input[name*="percent"]',
-                'input[id*="percent"]',
-                'input[placeholder*="percent" i]',
-            ]
-            for sel in pct_selectors:
-                try:
-                    inp = self.driver.find_element(By.CSS_SELECTOR, sel)
-                    if inp.is_displayed():
-                        inp.clear()
-                        inp.send_keys(str(int(pct)))
-                        if self._submit_form():
-                            logger.info("StoryGraph progress saved: %.1f%%", pct)
-                            return True
-                except NoSuchElementException:
-                    continue
+            # Submit: input[type="submit"][value="Save"] inside the Track progress form
+            save_btn = self.driver.find_element(
+                By.CSS_SELECTOR, 'input[type="submit"][value="Save"]'
+            )
+            self.driver.execute_script("arguments[0].click();", save_btn)
+            time.sleep(2)
 
-        logger.warning("Could not locate a progress input field on StoryGraph")
-        return False
+            logger.info(
+                "StoryGraph progress saved: %s pages",
+                pages if pages is not None else f"~{int(total_pages * pct / 100)}",
+            )
+            return True
 
-    def _submit_form(self) -> bool:
-        submit_selectors = [
-            'input[type="submit"][value="Update"]',
-            'input[type="submit"][value*="Save" i]',
-            "input[type='submit']",
-            "button[type='submit']",
-        ]
-        for sel in submit_selectors:
-            try:
-                btn = self.driver.find_element(By.CSS_SELECTOR, sel)
-                if btn.is_displayed():
-                    btn.click()
-                    time.sleep(1)
-                    return True
-            except NoSuchElementException:
-                continue
-        return False
+        except TimeoutException:
+            logger.error("Timed out interacting with StoryGraph progress form")
+            return False
+        except Exception as exc:
+            logger.error("Error filling StoryGraph progress form: %s", exc)
+            return False
 
 
 # ---------------------------------------------------------------------------

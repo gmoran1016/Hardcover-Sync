@@ -35,7 +35,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
-    ElementClickInterceptedException,
     NoSuchElementException,
     TimeoutException,
 )
@@ -102,18 +101,28 @@ class GoodreadsSync:
         )
 
         try:
-            book_url = self._search_book(title, book.get("author"))
-            if not book_url:
-                logger.warning("Could not find '%s' on Goodreads", title)
-                return False
-
-            self.driver.get(book_url)
+            # The "Update progress" button lives on the home page's Currently Reading widget,
+            # not on the individual book page.
+            self.driver.get(GOODREADS_URL)
             time.sleep(2)
 
-            self._ensure_currently_reading()
-            time.sleep(1)
+            if not self._click_update_progress_for(title):
+                # Book isn't in Currently Reading widget — add it first via the book page
+                logger.info("Book not in Currently Reading widget; adding it to the shelf…")
+                book_url = self._search_book(title, book.get("author"))
+                if book_url:
+                    self.driver.get(book_url)
+                    time.sleep(2)
+                    self._ensure_currently_reading()
+                    time.sleep(2)
+                    self.driver.get(GOODREADS_URL)
+                    time.sleep(2)
+                    if not self._click_update_progress_for(title):
+                        logger.error("Still can't find Update progress for '%s'", title)
+                        return False
 
-            return self._do_update_progress(pages, pct)
+            time.sleep(1)
+            return self._fill_home_page_progress_form(pages, pct)
 
         except Exception as exc:
             logger.error("Error updating '%s' on Goodreads: %s", title, exc)
@@ -275,132 +284,158 @@ class GoodreadsSync:
         return None
 
     def _ensure_currently_reading(self) -> None:
-        """Move book to Currently Reading shelf if it isn't there already."""
+        """Click the shelf button and pick 'Currently reading' from the dropdown."""
         try:
             wait = WebDriverWait(self.driver, 6)
             shelf_btn = wait.until(
                 EC.presence_of_element_located((
                     By.CSS_SELECTOR,
-                    "button.wtrButton, .wantToReadButton, "
-                    "button[data-testid='bookPagePrimaryActionButton'], "
                     "button.Button--secondary.Button--block",
                 ))
             )
-
             if "currently reading" in shelf_btn.text.lower():
                 return
 
-            # Open the shelf dropdown and pick "Currently reading"
-            for caret_sel in (
-                ".wtrButtonDesktop .caretButton",
-                "button.caretButton",
-                ".dropdownButton",
-            ):
-                try:
-                    self.driver.find_element(By.CSS_SELECTOR, caret_sel).click()
-                    time.sleep(0.5)
-                    WebDriverWait(self.driver, 5).until(
-                        EC.element_to_be_clickable((
-                            By.XPATH,
-                            '//*[normalize-space(text())="Currently reading" '
-                            'or normalize-space(text())="Currently Reading"]',
-                        ))
-                    ).click()
-                    time.sleep(1)
-                    logger.info("Added book to Currently Reading shelf")
-                    return
-                except (NoSuchElementException, TimeoutException):
-                    continue
+            shelf_btn.click()
+            time.sleep(0.5)
+            WebDriverWait(self.driver, 5).until(
+                EC.element_to_be_clickable((
+                    By.XPATH,
+                    '//button[normalize-space(.)="Currently reading"]',
+                ))
+            ).click()
+            time.sleep(1)
+            logger.info("Added book to Currently Reading shelf")
 
-        except TimeoutException:
+        except (TimeoutException, NoSuchElementException):
             pass
         except Exception as exc:
             logger.debug("_ensure_currently_reading: %s", exc)
 
     # ------------------------------------------------------------------
-    # Progress update
+    # Home-page progress update (the only place Goodreads shows the form)
     # ------------------------------------------------------------------
 
-    def _do_update_progress(self, pages: int | None, pct: float | None) -> bool:
-        """Click 'Update progress', fill in the form, submit."""
-        triggers = [
-            (By.XPATH, '//a[contains(normalize-space(.), "Update progress")]'),
-            (By.XPATH, '//button[contains(normalize-space(.), "Update progress")]'),
-            (By.CSS_SELECTOR, "a.updateButton, .updateProgressButton"),
-            (By.XPATH, '//a[contains(@href, "user_status")]'),
-        ]
-        for by, sel in triggers:
+    def _click_update_progress_for(self, title: str) -> bool:
+        """Find and click 'Update progress' for the given book in the Currently Reading widget."""
+        title_norm = _normalise(title)
+
+        try:
+            wait = WebDriverWait(self.driver, 5)
+            btns = wait.until(
+                EC.presence_of_all_elements_located((
+                    By.XPATH, '//button[normalize-space(.)="Update progress"]'
+                ))
+            )
+        except TimeoutException:
+            logger.debug("No 'Update progress' buttons found on home page")
+            return False
+
+        def js_click(el):
+            # Use JS click to bypass any overlapping banner/header elements
+            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+            time.sleep(0.3)
+            self.driver.execute_script("arguments[0].click();", el)
+
+        if len(btns) == 1:
+            js_click(btns[0])
+            logger.debug("Clicked Update progress (only one button)")
+            return True
+
+        # Multiple books — find the one whose container mentions this title
+        for btn in btns:
             try:
-                el = self.driver.find_element(by, sel)
-                if el.is_displayed():
-                    self.driver.execute_script("arguments[0].scrollIntoView(true);", el)
-                    time.sleep(0.3)
-                    el.click()
-                    logger.debug("Clicked update-progress trigger via: %s", sel)
-                    break
-            except (NoSuchElementException, ElementClickInterceptedException):
-                continue
-
-        time.sleep(1)
-
-        if pages is not None:
-            for sel in [
-                'input[name="user_status[page]"]',
-                'input[name*="page"]',
-                "input#current_page",
-                "input.pageInput",
-                'input[placeholder*="page" i]',
-                "input[type='number']",
-            ]:
-                try:
-                    inp = self.driver.find_element(By.CSS_SELECTOR, sel)
-                    if inp.is_displayed():
-                        inp.clear()
-                        inp.send_keys(str(pages))
-                        if self._submit_progress_form():
-                            logger.info("Goodreads progress saved: %d pages", pages)
-                            return True
-                except NoSuchElementException:
-                    continue
-
-        if pct is not None:
-            for sel in [
-                'input[name="user_status[percent]"]',
-                'input[name*="percent"]',
-                "input#current_percent",
-                'input[placeholder*="percent" i]',
-            ]:
-                try:
-                    inp = self.driver.find_element(By.CSS_SELECTOR, sel)
-                    if inp.is_displayed():
-                        inp.clear()
-                        inp.send_keys(str(int(pct)))
-                        if self._submit_progress_form():
-                            logger.info("Goodreads progress saved: %.1f%%", pct)
-                            return True
-                except NoSuchElementException:
-                    continue
-
-        logger.error("Could not locate a progress input field on Goodreads")
-        return False
-
-    def _submit_progress_form(self) -> bool:
-        for sel in [
-            'input[type="submit"][value*="Save" i]',
-            'input[type="submit"][value*="Update" i]',
-            "input[type='submit']",
-            "button[type='submit']",
-            'button[data-testid="saveProgressButton"]',
-        ]:
-            try:
-                btn = self.driver.find_element(By.CSS_SELECTOR, sel)
-                if btn.is_displayed():
-                    btn.click()
-                    time.sleep(1)
+                container = btn.find_element(
+                    By.XPATH,
+                    "./ancestor::div[.//a[contains(@href,'/book/show/')]][1]",
+                )
+                if title_norm[:15] in _normalise(container.text):
+                    js_click(btn)
+                    logger.debug("Clicked Update progress for '%s'", title)
                     return True
             except NoSuchElementException:
                 continue
+
+        # Fallback: first button
+        if btns:
+            js_click(btns[0])
+            logger.warning("Could not match book; clicking first 'Update progress' button")
+            return True
+
         return False
+
+    def _fill_home_page_progress_form(self, pages: int | None, pct: float | None) -> bool:
+        """Fill and submit the inline progress form that appears after clicking Update progress."""
+        try:
+            wait = WebDriverWait(self.driver, 8)
+
+            if pages is not None:
+                # Ensure we're in pages mode (the # button)
+                try:
+                    hash_btn = self.driver.find_element(
+                        By.XPATH, '//button[normalize-space(.)="#"]'
+                    )
+                    if hash_btn.is_displayed():
+                        hash_btn.click()
+                        time.sleep(0.3)
+                except NoSuchElementException:
+                    pass
+
+                # The page input has placeholder "p. NNN"
+                page_input = wait.until(
+                    EC.presence_of_element_located((
+                        By.XPATH, '//input[starts-with(@placeholder,"p.")]'
+                    ))
+                )
+                page_input.clear()
+                page_input.send_keys(str(pages))
+
+            elif pct is not None:
+                # Switch to percent mode
+                try:
+                    pct_btn = self.driver.find_element(
+                        By.XPATH, '//button[normalize-space(.)="%"]'
+                    )
+                    if pct_btn.is_displayed():
+                        pct_btn.click()
+                        time.sleep(0.3)
+                except NoSuchElementException:
+                    pass
+
+                pct_input = wait.until(
+                    EC.presence_of_element_located((
+                        By.XPATH, '//input[starts-with(@placeholder,"%")]'
+                    ))
+                )
+                pct_input.clear()
+                pct_input.send_keys(str(int(pct)))
+
+            else:
+                logger.error("No pages or percent to submit")
+                return False
+
+            # The submit button is also labelled "Update progress"
+            # After the form opens there should be exactly one visible
+            submit = wait.until(
+                EC.element_to_be_clickable((
+                    By.XPATH, '//button[normalize-space(.)="Update progress"]'
+                ))
+            )
+            submit.click()
+            time.sleep(1)
+
+            if pages is not None:
+                logger.info("Goodreads progress saved: %d pages", pages)
+            else:
+                logger.info("Goodreads progress saved: %.1f%%", pct)
+            return True
+
+        except TimeoutException:
+            logger.error("Timed out waiting for progress form fields")
+            return False
+        except Exception as exc:
+            logger.error("Error filling Goodreads progress form: %s", exc)
+            return False
 
 
 # ---------------------------------------------------------------------------
