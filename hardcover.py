@@ -38,8 +38,10 @@ def get_currently_reading(api_key: str) -> list[dict]:
     Returns a list of dicts with keys:
       title, author, total_pages, progress_pages, progress_percent
     """
+    # Strip a "Bearer " prefix if the user stored the full header value in .env
+    token = api_key.removeprefix("Bearer ").strip()
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
 
@@ -57,11 +59,10 @@ def get_currently_reading(api_key: str) -> list[dict]:
             logger.error("Hardcover API returned errors: %s", data["errors"])
             return []
 
-        user_books = (
-            (data.get("data") or {})
-            .get("me", {})
-            .get("user_books", [])
-        )
+        me_data = (data.get("data") or {}).get("me") or []
+        # me is returned as a list; take the first (and only) element
+        me = me_data[0] if me_data else {}
+        user_books = me.get("user_books", [])
 
         books = []
         for ub in user_books:
