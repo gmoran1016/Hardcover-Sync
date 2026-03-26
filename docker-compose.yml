@@ -5,3 +5,7 @@ services:
     env_file: .env
     # Chrome needs more shared memory than the Docker default (64 MB)
     shm_size: "256mb"
+    volumes:
+      # Mount the cookies folder so the container can use your saved sessions.
+      # Run 'python setup_cookies.py' on your local machine first.
+      - ./cookies:/app/cookies

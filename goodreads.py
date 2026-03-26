@@ -3,14 +3,30 @@
 Because Goodreads shut down their public API, progress updates are done
 by controlling a headless Chrome browser session.
 
+Authentication strategy
+-----------------------
+Goodreads uses Amazon's login infrastructure which shows a CAPTCHA
+challenge when it detects a headless browser.  To work around this we
+use saved session cookies instead of filling the login form.
+
+Run setup_cookies.py ONCE on your local machine to save your session:
+
+    python setup_cookies.py
+
+The cookies are stored in cookies/goodreads.json.  The sync app loads
+them on every run.  Re-run setup_cookies.py whenever you are logged out.
+
 Flow for each book:
-  1. Search Goodreads for the book title (+ author).
-  2. Navigate to the book page.
-  3. If the book is not already on the "Currently Reading" shelf, add it.
-  4. Click the "Update progress" control and submit the page count.
+  1. Load session cookies → navigate to Goodreads (logged in).
+  2. Search for the book by title + author.
+  3. Navigate to the book page.
+  4. If not on Currently Reading shelf, add it.
+  5. Click Update progress and submit the page count.
 """
 
+import json
 import logging
+import os
 import re
 import time
 from urllib.parse import quote_plus
@@ -28,6 +44,7 @@ from driver import create_driver
 
 logger = logging.getLogger(__name__)
 GOODREADS_URL = "https://www.goodreads.com"
+COOKIES_FILE = os.path.join(os.path.dirname(__file__), "cookies", "goodreads.json")
 
 
 class GoodreadsSync:
@@ -54,64 +71,23 @@ class GoodreadsSync:
     # ------------------------------------------------------------------
 
     def login(self) -> bool:
-        logger.info("Logging in to Goodreads…")
-        try:
-            self.driver.get(f"{GOODREADS_URL}/user/sign_in")
-            wait = WebDriverWait(self.driver, 15)
-
-            # Goodreads now shows OAuth buttons first.
-            # Click "Sign in with email" to reveal the email/password form.
-            sign_in_with_email = wait.until(
-                EC.element_to_be_clickable((
-                    By.XPATH,
-                    '//button[contains(normalize-space(.), "Sign in with email")]'
-                    ' | //a[contains(normalize-space(.), "Sign in with email")]',
-                ))
-            )
-            sign_in_with_email.click()
-            time.sleep(1)
-
-            # Now the email/password form should be visible
-            email_field = wait.until(
-                EC.presence_of_element_located((
-                    By.CSS_SELECTOR,
-                    'input#user_email, input[name="user[email]"], input[type="email"]',
-                ))
-            )
-            email_field.clear()
-            email_field.send_keys(self.email)
-            time.sleep(0.4)
-
-            pw_field = self.driver.find_element(
-                By.CSS_SELECTOR,
-                'input#user_password, input[name="user[password]"], input[type="password"]',
-            )
-            pw_field.clear()
-            pw_field.send_keys(self.password)
-            time.sleep(0.4)
-
-            self.driver.find_element(
-                By.CSS_SELECTOR, 'input[type="submit"], button[type="submit"]'
-            ).click()
-
-            # Wait until we leave the sign-in page
-            WebDriverWait(self.driver, 15).until(
-                lambda d: "sign_in" not in d.current_url
-            )
-
-            if "goodreads.com" in self.driver.current_url:
-                logger.info("Goodreads login successful")
+        """Authenticate via saved cookies (preferred) or form login (fallback)."""
+        if os.path.exists(COOKIES_FILE):
+            if self._login_with_cookies():
                 return True
-
-            logger.error("Goodreads login may have failed. URL: %s", self.driver.current_url)
+            logger.warning(
+                "Saved cookies are expired or invalid. "
+                "Re-run 'python setup_cookies.py' to refresh them."
+            )
             return False
 
-        except TimeoutException:
-            logger.error("Timed out waiting for Goodreads login")
-            return False
-        except Exception as exc:
-            logger.error("Goodreads login error: %s", exc)
-            return False
+        logger.warning(
+            "No cookies file found at %s. "
+            "Run 'python setup_cookies.py' to create it. "
+            "Falling back to form login (may hit CAPTCHA).",
+            COOKIES_FILE,
+        )
+        return self._login_with_form()
 
     def update_progress(self, book: dict) -> bool:
         title = book["title"]
@@ -144,7 +120,122 @@ class GoodreadsSync:
             return False
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Login helpers
+    # ------------------------------------------------------------------
+
+    def _login_with_cookies(self) -> bool:
+        logger.info("Loading Goodreads session from saved cookies…")
+        try:
+            with open(COOKIES_FILE) as f:
+                cookies = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.error("Could not read cookies file: %s", exc)
+            return False
+
+        # Must navigate to the domain before adding cookies
+        self.driver.get(GOODREADS_URL)
+        time.sleep(1)
+
+        for cookie in cookies:
+            cookie.pop("sameSite", None)  # can cause errors in some versions
+            try:
+                self.driver.add_cookie(cookie)
+            except Exception:
+                pass
+
+        self.driver.refresh()
+        time.sleep(2)
+
+        if self._is_logged_in():
+            logger.info("Goodreads authenticated via saved cookies")
+            return True
+
+        return False
+
+    def _login_with_form(self) -> bool:
+        """Form-based login fallback — may hit Amazon's CAPTCHA in headless mode."""
+        logger.info("Attempting Goodreads form login…")
+        try:
+            self.driver.get(f"{GOODREADS_URL}/user/sign_in")
+            wait = WebDriverWait(self.driver, 15)
+
+            # Goodreads shows OAuth buttons first; click "Sign in with email"
+            wait.until(
+                EC.element_to_be_clickable((
+                    By.XPATH,
+                    '//button[contains(normalize-space(.), "Sign in with email")]'
+                    ' | //a[contains(normalize-space(.), "Sign in with email")]',
+                ))
+            ).click()
+            time.sleep(1)
+
+            wait.until(
+                EC.presence_of_element_located((
+                    By.CSS_SELECTOR,
+                    'input#user_email, input[name="user[email]"], input[type="email"]',
+                ))
+            ).send_keys(self.email)
+            time.sleep(0.4)
+
+            self.driver.find_element(
+                By.CSS_SELECTOR,
+                'input#user_password, input[name="user[password]"], input[type="password"]',
+            ).send_keys(self.password)
+            time.sleep(0.4)
+
+            self.driver.find_element(
+                By.CSS_SELECTOR, 'input[type="submit"], button[type="submit"]'
+            ).click()
+
+            # Wait up to 20s — Amazon CVF/CAPTCHA page will stall here
+            for _ in range(20):
+                time.sleep(1)
+                if self._is_logged_in():
+                    logger.info("Goodreads form login successful")
+                    return True
+                url = self.driver.current_url
+                if "cvf" in url or "captcha" in url.lower():
+                    logger.error(
+                        "Goodreads login blocked by CAPTCHA. "
+                        "Run 'python setup_cookies.py' to fix this."
+                    )
+                    return False
+
+            logger.error("Goodreads form login timed out")
+            return False
+
+        except TimeoutException:
+            logger.error("Timed out during Goodreads form login")
+            return False
+        except Exception as exc:
+            logger.error("Goodreads form login error: %s", exc)
+            return False
+
+    def _is_logged_in(self) -> bool:
+        """Return True if the current page indicates an active Goodreads session."""
+        url = self.driver.current_url
+        title = self.driver.title.lower()
+        # Logged-in home page has "recent updates" or user-specific content
+        # Sign-in page or Amazon auth pages indicate failure
+        if "sign_in" in url or "ap/signin" in url or "ap/cvf" in url:
+            return False
+        if "sign in" in title and "goodreads" in title:
+            return False
+        # Confirmed logged-in indicators
+        if "recent updates" in title or "goodreads" in url:
+            # Check for a nav element only present when logged in
+            try:
+                self.driver.find_element(
+                    By.CSS_SELECTOR,
+                    'a[href*="/user/show"], a[href*="/review/list"], nav',
+                )
+                return True
+            except NoSuchElementException:
+                pass
+        return False
+
+    # ------------------------------------------------------------------
+    # Book search & shelf management
     # ------------------------------------------------------------------
 
     def _search_book(self, title: str, author: str | None) -> str | None:
@@ -170,7 +261,6 @@ class GoodreadsSync:
                     logger.debug("Matched Goodreads result: %s → %s", link.text.strip(), href)
                     return href
 
-            # No close match — fall back to first result
             if links:
                 href = links[0].get_attribute("href")
                 logger.warning(
@@ -185,39 +275,37 @@ class GoodreadsSync:
         return None
 
     def _ensure_currently_reading(self) -> None:
-        """If the book is not on the Currently Reading shelf, put it there."""
+        """Move book to Currently Reading shelf if it isn't there already."""
         try:
             wait = WebDriverWait(self.driver, 6)
-            # The shelf button text reflects the current shelf assignment
             shelf_btn = wait.until(
                 EC.presence_of_element_located((
                     By.CSS_SELECTOR,
                     "button.wtrButton, .wantToReadButton, "
-                    "button[data-testid='bookPagePrimaryActionButton']",
+                    "button[data-testid='bookPagePrimaryActionButton'], "
+                    "button.Button--secondary.Button--block",
                 ))
             )
 
             if "currently reading" in shelf_btn.text.lower():
-                return  # Already correct
+                return
 
-            # Try opening the shelf dropdown and picking "Currently reading"
+            # Open the shelf dropdown and pick "Currently reading"
             for caret_sel in (
                 ".wtrButtonDesktop .caretButton",
                 "button.caretButton",
                 ".dropdownButton",
             ):
                 try:
-                    caret = self.driver.find_element(By.CSS_SELECTOR, caret_sel)
-                    caret.click()
+                    self.driver.find_element(By.CSS_SELECTOR, caret_sel).click()
                     time.sleep(0.5)
-                    option = WebDriverWait(self.driver, 5).until(
+                    WebDriverWait(self.driver, 5).until(
                         EC.element_to_be_clickable((
                             By.XPATH,
                             '//*[normalize-space(text())="Currently reading" '
                             'or normalize-space(text())="Currently Reading"]',
                         ))
-                    )
-                    option.click()
+                    ).click()
                     time.sleep(1)
                     logger.info("Added book to Currently Reading shelf")
                     return
@@ -225,14 +313,16 @@ class GoodreadsSync:
                     continue
 
         except TimeoutException:
-            pass  # Button not found; may already be set correctly
+            pass
         except Exception as exc:
             logger.debug("_ensure_currently_reading: %s", exc)
 
+    # ------------------------------------------------------------------
+    # Progress update
+    # ------------------------------------------------------------------
+
     def _do_update_progress(self, pages: int | None, pct: float | None) -> bool:
         """Click 'Update progress', fill in the form, submit."""
-        # --- Locate and click the update-progress trigger ---
-        trigger_found = False
         triggers = [
             (By.XPATH, '//a[contains(normalize-space(.), "Update progress")]'),
             (By.XPATH, '//button[contains(normalize-space(.), "Update progress")]'),
@@ -246,28 +336,22 @@ class GoodreadsSync:
                     self.driver.execute_script("arguments[0].scrollIntoView(true);", el)
                     time.sleep(0.3)
                     el.click()
-                    trigger_found = True
                     logger.debug("Clicked update-progress trigger via: %s", sel)
                     break
             except (NoSuchElementException, ElementClickInterceptedException):
                 continue
 
-        if not trigger_found:
-            logger.debug("No 'Update progress' trigger found; attempting to fill form directly")
-
         time.sleep(1)
 
-        # --- Try to enter page number ---
         if pages is not None:
-            page_selectors = [
+            for sel in [
                 'input[name="user_status[page]"]',
                 'input[name*="page"]',
                 "input#current_page",
                 "input.pageInput",
                 'input[placeholder*="page" i]',
                 "input[type='number']",
-            ]
-            for sel in page_selectors:
+            ]:
                 try:
                     inp = self.driver.find_element(By.CSS_SELECTOR, sel)
                     if inp.is_displayed():
@@ -279,15 +363,13 @@ class GoodreadsSync:
                 except NoSuchElementException:
                     continue
 
-        # --- Fallback: enter percentage ---
         if pct is not None:
-            pct_selectors = [
+            for sel in [
                 'input[name="user_status[percent]"]',
                 'input[name*="percent"]',
                 "input#current_percent",
                 'input[placeholder*="percent" i]',
-            ]
-            for sel in pct_selectors:
+            ]:
                 try:
                     inp = self.driver.find_element(By.CSS_SELECTOR, sel)
                     if inp.is_displayed():
@@ -303,14 +385,13 @@ class GoodreadsSync:
         return False
 
     def _submit_progress_form(self) -> bool:
-        submit_selectors = [
+        for sel in [
             'input[type="submit"][value*="Save" i]',
             'input[type="submit"][value*="Update" i]',
             "input[type='submit']",
             "button[type='submit']",
             'button[data-testid="saveProgressButton"]',
-        ]
-        for sel in submit_selectors:
+        ]:
             try:
                 btn = self.driver.find_element(By.CSS_SELECTOR, sel)
                 if btn.is_displayed():
@@ -327,7 +408,6 @@ class GoodreadsSync:
 # ---------------------------------------------------------------------------
 
 def _normalise(text: str) -> str:
-    """Lowercase, strip series parentheticals, collapse whitespace."""
     text = (text or "").lower()
     text = re.sub(r"\s*\(.*?\)", "", text)
     return text.strip()

@@ -1,5 +1,6 @@
 # Environment / secrets — never commit these
 .env
+cookies/
 
 # Python
 __pycache__/

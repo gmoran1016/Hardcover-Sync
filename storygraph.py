@@ -3,13 +3,19 @@
 StoryGraph has no public API, so progress is updated through a
 headless browser session.
 
+Authentication: tries saved cookies first (cookies/storygraph.json),
+falls back to form login.  Run setup_cookies.py to create/refresh cookies.
+
 Flow for each book:
-  1. Search StoryGraph for the book title.
-  2. Navigate to the book page.
-  3. Find the reading-progress widget and submit updated pages/percent.
+  1. Authenticate (cookies or form).
+  2. Search StoryGraph for the book title.
+  3. Navigate to the book page.
+  4. Find the reading-progress widget and submit updated pages/percent.
 """
 
+import json
 import logging
+import os
 import re
 import time
 from urllib.parse import quote_plus
@@ -23,6 +29,7 @@ from driver import create_driver
 
 logger = logging.getLogger(__name__)
 STORYGRAPH_URL = "https://app.thestorygraph.com"
+COOKIES_FILE = os.path.join(os.path.dirname(__file__), "cookies", "storygraph.json")
 
 
 class StorygraphSync:
@@ -49,38 +56,68 @@ class StorygraphSync:
     # ------------------------------------------------------------------
 
     def login(self) -> bool:
-        logger.info("Logging in to StoryGraph…")
+        """Authenticate via saved cookies (preferred) or form login (fallback)."""
+        if os.path.exists(COOKIES_FILE):
+            if self._login_with_cookies():
+                return True
+            logger.warning(
+                "StoryGraph cookies expired. Re-run 'python setup_cookies.py'."
+            )
+            # Fall through to form login
+        return self._login_with_form()
+
+    def _login_with_cookies(self) -> bool:
+        logger.info("Loading StoryGraph session from saved cookies…")
+        try:
+            with open(COOKIES_FILE) as f:
+                cookies = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.error("Could not read StoryGraph cookies: %s", exc)
+            return False
+
+        self.driver.get(STORYGRAPH_URL)
+        time.sleep(1)
+        for cookie in cookies:
+            cookie.pop("sameSite", None)
+            try:
+                self.driver.add_cookie(cookie)
+            except Exception:
+                pass
+        self.driver.refresh()
+        time.sleep(2)
+
+        if "sign_in" not in self.driver.current_url and STORYGRAPH_URL in self.driver.current_url:
+            logger.info("StoryGraph authenticated via saved cookies")
+            return True
+        return False
+
+    def _login_with_form(self) -> bool:
+        logger.info("Logging in to StoryGraph via form…")
         try:
             self.driver.get(f"{STORYGRAPH_URL}/users/sign_in")
             wait = WebDriverWait(self.driver, 15)
 
-            # Confirmed selectors from live page inspection: #user_email / #user_password
-            email_field = wait.until(
+            # Confirmed selectors from live page inspection
+            wait.until(
                 EC.presence_of_element_located((
                     By.CSS_SELECTOR,
                     '#user_email, input[name="user[email]"], input[type="email"]',
                 ))
-            )
-            email_field.clear()
-            email_field.send_keys(self.email)
+            ).send_keys(self.email)
             time.sleep(0.4)
 
-            pw_field = self.driver.find_element(
+            self.driver.find_element(
                 By.CSS_SELECTOR,
                 '#user_password, input[name="user[password]"], input[type="password"]',
-            )
-            pw_field.clear()
-            pw_field.send_keys(self.password)
+            ).send_keys(self.password)
             time.sleep(0.4)
 
-            # StoryGraph uses a "Sign in" button (text-based)
             try:
-                btn = self.driver.find_element(
+                self.driver.find_element(
                     By.XPATH,
                     '//button[contains(normalize-space(.), "Sign in") '
                     'or contains(normalize-space(.), "Sign In")]',
-                )
-                btn.click()
+                ).click()
             except NoSuchElementException:
                 self.driver.find_element(
                     By.CSS_SELECTOR, 'input[type="submit"], button[type="submit"]'
@@ -91,7 +128,7 @@ class StorygraphSync:
             )
 
             if STORYGRAPH_URL in self.driver.current_url:
-                logger.info("StoryGraph login successful")
+                logger.info("StoryGraph form login successful")
                 return True
 
             logger.error("StoryGraph login failed. URL: %s", self.driver.current_url)
