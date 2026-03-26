@@ -1,86 +1,120 @@
+"""Hardcover Sync — main entry point.
+
+Polls Hardcover every SYNC_INTERVAL_MINUTES minutes and pushes reading
+progress to Goodreads (required) and StoryGraph (optional).
+"""
+
+import logging
 import os
+import signal
 import time
-import requests
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
-# Configuration
-HARDCOVER_API_KEY = os.getenv('HARDCOVER_API_KEY')
-GOODREADS_USER_ID = os.getenv('GOODREADS_USER_ID')
-STORYGRAPH_USERNAME = os.getenv('STORYGRAPH_USERNAME')
-STORYGRAPH_PASSWORD = os.getenv('STORYGRAPH_PASSWORD')
+from dotenv import load_dotenv
 
-# URLs
-HARDCOVER_API_URL = 'https://api.hardcover.app/v1'
-GOODREADS_URL = 'https://www.goodreads.com'
-STORYGRAPH_URL = 'https://app.thestorygraph.com'
+from hardcover import get_currently_reading
+from goodreads import GoodreadsSync
+from storygraph import StorygraphSync
 
-def get_hardcover_reading_progress():
-    """Fetch currently reading books from Hardcover.app"""
-    headers = {'Authorization': f'Bearer {HARDCOVER_API_KEY}'}
-    response = requests.get(f'{HARDCOVER_API_URL}/user/books?status=currently-reading', headers=headers)
-    if response.status_code == 200:
-        return response.json()
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+load_dotenv()
+
+HARDCOVER_API_KEY = os.getenv("HARDCOVER_API_KEY", "")
+GOODREADS_EMAIL = os.getenv("GOODREADS_EMAIL", "")
+GOODREADS_PASSWORD = os.getenv("GOODREADS_PASSWORD", "")
+STORYGRAPH_EMAIL = os.getenv("STORYGRAPH_EMAIL", "")
+STORYGRAPH_PASSWORD = os.getenv("STORYGRAPH_PASSWORD", "")
+SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL_MINUTES", "30")) * 60
+
+
+# ---------------------------------------------------------------------------
+# Sync logic
+# ---------------------------------------------------------------------------
+
+def run_sync() -> None:
+    if not HARDCOVER_API_KEY:
+        logger.error("HARDCOVER_API_KEY is not set — nothing to do")
+        return
+
+    # 1. Fetch from Hardcover
+    books = get_currently_reading(HARDCOVER_API_KEY)
+    if not books:
+        logger.info("No currently-reading books found on Hardcover")
+        return
+
+    logger.info("Found %d book(s) on Hardcover", len(books))
+
+    # 2. Push to Goodreads (required)
+    if GOODREADS_EMAIL and GOODREADS_PASSWORD:
+        with GoodreadsSync(GOODREADS_EMAIL, GOODREADS_PASSWORD) as gr:
+            if gr.login():
+                for book in books:
+                    gr.update_progress(book)
+            else:
+                logger.error("Goodreads login failed — skipping Goodreads sync")
     else:
-        print(f"Error fetching from Hardcover: {response.status_code}")
-        return []
+        logger.warning(
+            "GOODREADS_EMAIL / GOODREADS_PASSWORD not set — skipping Goodreads sync"
+        )
 
-def update_goodreads(book_title, progress):
-    """Update progress on Goodreads (placeholder - API deprecated)"""
-    # Goodreads API is deprecated, this would need web scraping or manual update
-    print(f"Updating Goodreads for '{book_title}': {progress}%")
-    # Placeholder: implement scraping if needed
-    pass
+    # 3. Push to StoryGraph (optional)
+    if STORYGRAPH_EMAIL and STORYGRAPH_PASSWORD:
+        with StorygraphSync(STORYGRAPH_EMAIL, STORYGRAPH_PASSWORD) as sg:
+            if sg.login():
+                for book in books:
+                    sg.update_progress(book)
+            else:
+                logger.error("StoryGraph login failed — skipping StoryGraph sync")
+    else:
+        logger.info("StoryGraph credentials not set — skipping StoryGraph sync")
 
-def update_storygraph(book_title, progress):
-    """Update progress on Storygraph using Selenium"""
-    options = Options()
-    options.add_argument('--headless')
-    driver = webdriver.Chrome(options=options)
 
-    try:
-        driver.get(STORYGRAPH_URL)
-        # Login
-        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.NAME, 'email')))
-        driver.find_element(By.NAME, 'email').send_keys(STORYGRAPH_USERNAME)
-        driver.find_element(By.NAME, 'password').send_keys(STORYGRAPH_PASSWORD)
-        driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
 
-        # Wait for login and navigate to reading list
-        WebDriverWait(driver, 10).until(EC.url_contains('dashboard'))
-        driver.get(f'{STORYGRAPH_URL}/reading-list')
+def main() -> None:
+    logger.info("Hardcover Sync starting (interval: %d min)", SYNC_INTERVAL // 60)
 
-        # Find the book and update progress
-        books = driver.find_elements(By.CLASS_NAME, 'book-item')  # Adjust selector
-        for book in books:
-            if book_title.lower() in book.text.lower():
-                # Click to open book details
-                book.click()
-                # Update progress (adjust selectors based on actual site)
-                progress_input = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, 'progress-input')))
-                progress_input.clear()
-                progress_input.send_keys(str(progress))
-                driver.find_element(By.ID, 'update-progress').click()
+    running = True
+
+    def _stop(sig, _frame):
+        nonlocal running
+        logger.info("Shutdown signal received")
+        running = False
+
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+
+    while running:
+        try:
+            run_sync()
+        except Exception as exc:
+            logger.exception("Unexpected error during sync: %s", exc)
+
+        if not running:
+            break
+
+        logger.info("Next sync in %d minutes", SYNC_INTERVAL // 60)
+        # Sleep in 1-second ticks so SIGTERM is handled promptly
+        for _ in range(SYNC_INTERVAL):
+            if not running:
                 break
-    finally:
-        driver.quit()
+            time.sleep(1)
 
-def sync_progress():
-    """Main sync function"""
-    books = get_hardcover_reading_progress()
-    for book in books:
-        title = book['title']
-        progress = book.get('progress_percentage', 0)
-        update_goodreads(title, progress)
-        update_storygraph(title, progress)
+    logger.info("Hardcover Sync stopped")
 
-def main():
-    while True:
-        sync_progress()
-        time.sleep(15 * 60)  # 15 minutes
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

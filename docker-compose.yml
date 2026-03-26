@@ -1,0 +1,7 @@
+services:
+  hardcover-sync:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    # Chrome needs more shared memory than the Docker default (64 MB)
+    shm_size: "256mb"
