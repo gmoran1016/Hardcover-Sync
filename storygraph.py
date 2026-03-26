@@ -54,10 +54,11 @@ class StorygraphSync:
             self.driver.get(f"{STORYGRAPH_URL}/users/sign_in")
             wait = WebDriverWait(self.driver, 15)
 
+            # Confirmed selectors from live page inspection: #user_email / #user_password
             email_field = wait.until(
                 EC.presence_of_element_located((
                     By.CSS_SELECTOR,
-                    'input[type="email"], input[name="user[email]"], #user_email',
+                    '#user_email, input[name="user[email]"], input[type="email"]',
                 ))
             )
             email_field.clear()
@@ -66,7 +67,7 @@ class StorygraphSync:
 
             pw_field = self.driver.find_element(
                 By.CSS_SELECTOR,
-                'input[type="password"], input[name="user[password]"], #user_password',
+                '#user_password, input[name="user[password]"], input[type="password"]',
             )
             pw_field.clear()
             pw_field.send_keys(self.password)

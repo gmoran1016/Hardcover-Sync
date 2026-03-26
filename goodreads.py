@@ -59,6 +59,19 @@ class GoodreadsSync:
             self.driver.get(f"{GOODREADS_URL}/user/sign_in")
             wait = WebDriverWait(self.driver, 15)
 
+            # Goodreads now shows OAuth buttons first.
+            # Click "Sign in with email" to reveal the email/password form.
+            sign_in_with_email = wait.until(
+                EC.element_to_be_clickable((
+                    By.XPATH,
+                    '//button[contains(normalize-space(.), "Sign in with email")]'
+                    ' | //a[contains(normalize-space(.), "Sign in with email")]',
+                ))
+            )
+            sign_in_with_email.click()
+            time.sleep(1)
+
+            # Now the email/password form should be visible
             email_field = wait.until(
                 EC.presence_of_element_located((
                     By.CSS_SELECTOR,
