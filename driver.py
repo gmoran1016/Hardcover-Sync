@@ -2,10 +2,14 @@
 
 import os
 import logging
+import subprocess
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+
+# Suppress Selenium's built-in Plausible telemetry
+os.environ.setdefault("SE_AVOID_STATS", "true")
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +31,8 @@ def create_driver() -> webdriver.Chrome:
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-extensions")
+    options.add_argument("--log-level=3")          # Silence Chrome's stderr noise
+    options.add_experimental_option("excludeSwitches", ["enable-logging"])
     # Reduce bot-detection signals
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -41,12 +47,19 @@ def create_driver() -> webdriver.Chrome:
         options.binary_location = chrome_bin
         logger.debug("Using Chrome binary: %s", chrome_bin)
 
+    # Route chromedriver's own log to devnull to suppress DevTools/USB lines
+    log_sink = subprocess.DEVNULL
+
     chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
     if chromedriver_path and os.path.exists(chromedriver_path):
         logger.debug("Using ChromeDriver: %s", chromedriver_path)
-        driver = webdriver.Chrome(service=Service(chromedriver_path), options=options)
+        driver = webdriver.Chrome(
+            service=Service(chromedriver_path, log_output=log_sink), options=options
+        )
     else:
-        driver = webdriver.Chrome(options=options)
+        driver = webdriver.Chrome(
+            service=Service(log_output=log_sink), options=options
+        )
 
     # Mask the navigator.webdriver property to reduce bot-detection
     driver.execute_cdp_cmd(
