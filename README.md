@@ -85,67 +85,60 @@ docker compose logs -f
 
 ## Unraid installation
 
+The Docker image is automatically built and published to GitHub Container Registry on every push to `main`. No plugins required — use Unraid's built-in Docker tab.
+
 ### Requirements
-- Unraid 6.12+ with the **Compose Manager** plugin (Community Applications → search "Compose Manager")
-- The `cookies/` folder saved from `setup_cookies.py` (run on another machine first — see Prerequisites above)
+- The `cookies/` folder saved from `setup_cookies.py` (run on your PC first — see Prerequisites above)
 
 ### Steps
 
-**1. SSH into your Unraid server and create a folder for the app:**
+**1. SSH into your Unraid server and create the appdata folder:**
 
 ```bash
 mkdir -p /mnt/user/appdata/hardcover-sync/cookies
 ```
 
-**2. Copy your cookies from the machine where you ran `setup_cookies.py`:**
+**2. Copy your cookies from your PC to Unraid:**
 
 ```bash
-# Run this on your local machine (not Unraid):
+# Run on your local PC:
 scp cookies/goodreads.json root@UNRAID_IP:/mnt/user/appdata/hardcover-sync/cookies/
 scp cookies/storygraph.json root@UNRAID_IP:/mnt/user/appdata/hardcover-sync/cookies/
 ```
 
-**3. In Unraid, go to the Docker tab → Compose Manager → Add New Stack**
+**3. In Unraid → Docker tab → Add Container**, fill in:
 
-Name it `hardcover-sync`, then paste this compose file:
+| Field | Value |
+|---|---|
+| Name | `hardcover-sync` |
+| Repository | `ghcr.io/gmoran1016/hardcover-sync:latest` |
+| Network type | `bridge` |
+| Extra Parameters | `--shm-size=256m --restart=unless-stopped` |
 
-```yaml
-services:
-  hardcover-sync:
-    build:
-      context: https://github.com/gmoran1016/Hardcover-Sync.git
-    restart: unless-stopped
-    shm_size: "256mb"
-    environment:
-      - HARDCOVER_API_KEY=your_hardcover_api_key_here
-      - GOODREADS_EMAIL=you@example.com
-      - GOODREADS_PASSWORD=your_password
-      - STORYGRAPH_EMAIL=
-      - STORYGRAPH_PASSWORD=
-      - SYNC_INTERVAL_MINUTES=30
-    volumes:
-      - /mnt/user/appdata/hardcover-sync/cookies:/app/cookies
-```
+Add these **Environment Variables** (click "+ Add another Path, Port, Variable, Label or Device"):
 
-Replace the environment variable values with your actual credentials.
+| Key | Value |
+|---|---|
+| `HARDCOVER_API_KEY` | Your Hardcover API key |
+| `GOODREADS_EMAIL` | Your Goodreads email |
+| `GOODREADS_PASSWORD` | Your Goodreads password |
+| `STORYGRAPH_EMAIL` | Your StoryGraph email (or leave blank) |
+| `STORYGRAPH_PASSWORD` | Your StoryGraph password (or leave blank) |
+| `SYNC_INTERVAL_MINUTES` | `30` |
 
-**4. Click Compose Up.**
+Add this **Volume mapping**:
 
-Unraid will pull the source from GitHub, build the image, and start the container. This takes a few minutes on first run.
+| Container path | Host path |
+|---|---|
+| `/app/cookies` | `/mnt/user/appdata/hardcover-sync/cookies` |
 
-**5. View logs** in Unraid → Docker tab → click the container icon → Logs.
+**4. Click Apply.**
+
+**5. View logs:** Docker tab → click the container icon → Logs.
 
 ### Updating
 
-To update to the latest version, SSH in and run:
-
-```bash
-cd /mnt/user/appdata/hardcover-sync   # or wherever Compose Manager stores it
-docker compose build --no-cache
-docker compose up -d
-```
-
-Or use Compose Manager's "Pull and Rebuild" button.
+In the Unraid Docker tab, click the container icon → **Update** (or force re-pull with `docker pull ghcr.io/gmoran1016/hardcover-sync:latest` via SSH).
 
 ---
 
