@@ -163,10 +163,24 @@ class StorygraphSync:
                     time.sleep(0.5)
 
             wait = WebDriverWait(self.driver, 8)
-            finished_btn = wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".mark-as-finished-btn"))
+
+            # The finish button is inside the reading-status dropdown — expand it first.
+            # Use the displayed one (there's also a hidden mobile duplicate at y=0).
+            expand_btns = self.driver.find_elements(By.CSS_SELECTOR, ".expand-dropdown-button")
+            expand_btn = next((b for b in expand_btns if b.is_displayed()), None)
+            if expand_btn:
+                self.driver.execute_script("arguments[0].scrollIntoView(true);", expand_btn)
+                self.driver.execute_script("arguments[0].click();", expand_btn)
+                time.sleep(0.5)
+
+            wait.until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".mark-as-finished-btn"))
             )
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", finished_btn)
+            all_finished = self.driver.find_elements(By.CSS_SELECTOR, ".mark-as-finished-btn")
+            finished_btn = next((b for b in all_finished if b.is_displayed()), None)
+            if finished_btn is None:
+                logger.error("mark-as-finished button not visible for '%s'", title)
+                return False
             self.driver.execute_script("arguments[0].click();", finished_btn)
             time.sleep(2)
             logger.info("StoryGraph: marked '%s' as finished", title)
