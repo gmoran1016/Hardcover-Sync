@@ -141,6 +141,44 @@ class StorygraphSync:
             logger.error("StoryGraph login error: %s", exc)
             return False
 
+    def mark_finished(self, book: dict) -> bool:
+        """Mark a book as finished on StoryGraph via the 'mark as finished' button."""
+        title = book["title"]
+        logger.info("Marking StoryGraph as finished: '%s'", title)
+        try:
+            book_url = self._search_book(title)
+            if not book_url:
+                logger.warning("Could not find '%s' on StoryGraph to mark finished", title)
+                return False
+
+            self.driver.get(book_url)
+            time.sleep(2)
+
+            # Dismiss banners
+            for btn in self.driver.find_elements(
+                By.XPATH, '//button[normalize-space(.)="Dismiss"]'
+            ):
+                if btn.is_displayed():
+                    self.driver.execute_script("arguments[0].click();", btn)
+                    time.sleep(0.5)
+
+            wait = WebDriverWait(self.driver, 8)
+            finished_btn = wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".mark-as-finished-btn"))
+            )
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", finished_btn)
+            self.driver.execute_script("arguments[0].click();", finished_btn)
+            time.sleep(2)
+            logger.info("StoryGraph: marked '%s' as finished", title)
+            return True
+
+        except TimeoutException:
+            logger.error("Timed out finding 'mark as finished' button for '%s'", title)
+            return False
+        except Exception as exc:
+            logger.error("Error marking '%s' as finished on StoryGraph: %s", title, exc)
+            return False
+
     def update_progress(self, book: dict) -> bool:
         title = book["title"]
         pages = book.get("progress_pages")

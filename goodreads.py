@@ -88,6 +88,38 @@ class GoodreadsSync:
         )
         return self._login_with_form()
 
+    def mark_finished(self, book: dict) -> bool:
+        """Mark a book as finished on Goodreads via the 'I'm finished!' button."""
+        title = book["title"]
+        logger.info("Marking Goodreads as finished: '%s'", title)
+        try:
+            self.driver.get(GOODREADS_URL)
+            time.sleep(2)
+
+            if not self._click_update_progress_for(title):
+                logger.warning("'%s' not in Currently Reading widget; can't mark finished", title)
+                return False
+
+            time.sleep(1)
+            wait = WebDriverWait(self.driver, 8)
+            finished_btn = wait.until(
+                EC.element_to_be_clickable((
+                    By.XPATH,
+                    '//button[contains(normalize-space(.), "finished")]',
+                ))
+            )
+            finished_btn.click()
+            time.sleep(2)
+            logger.info("Goodreads: marked '%s' as finished", title)
+            return True
+
+        except TimeoutException:
+            logger.error("Timed out finding 'I'm finished!' button for '%s'", title)
+            return False
+        except Exception as exc:
+            logger.error("Error marking '%s' as finished on Goodreads: %s", title, exc)
+            return False
+
     def update_progress(self, book: dict) -> bool:
         title = book["title"]
         pages = book.get("progress_pages")

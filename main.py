@@ -4,6 +4,7 @@ Polls Hardcover every SYNC_INTERVAL_MINUTES minutes and pushes reading
 progress to Goodreads (required) and StoryGraph (optional).
 """
 
+import json
 import logging
 import os
 import signal
@@ -11,7 +12,7 @@ import time
 
 from dotenv import load_dotenv
 
-from hardcover import get_currently_reading
+from hardcover import get_currently_reading, get_finished_books
 from goodreads import GoodreadsSync
 from storygraph import StorygraphSync
 
@@ -37,6 +38,30 @@ STORYGRAPH_EMAIL = os.getenv("STORYGRAPH_EMAIL", "")
 STORYGRAPH_PASSWORD = os.getenv("STORYGRAPH_PASSWORD", "")
 SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL_MINUTES", "30")) * 60
 
+# Stored alongside cookies so it persists in Docker volumes
+STATE_FILE = os.path.join(os.path.dirname(__file__), "cookies", "sync_state.json")
+
+
+# ---------------------------------------------------------------------------
+# State helpers
+# ---------------------------------------------------------------------------
+
+def _load_state() -> dict:
+    try:
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {"reading_titles": []}
+
+
+def _save_state(reading_titles: list[str]) -> None:
+    try:
+        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+        with open(STATE_FILE, "w") as f:
+            json.dump({"reading_titles": reading_titles}, f)
+    except OSError as exc:
+        logger.warning("Could not save sync state: %s", exc)
+
 
 # ---------------------------------------------------------------------------
 # Sync logic
@@ -47,13 +72,30 @@ def run_sync() -> None:
         logger.error("HARDCOVER_API_KEY is not set — nothing to do")
         return
 
-    # 1. Fetch from Hardcover
+    # 1. Fetch current reading list and compare with last sync to detect finished books
+    state = _load_state()
+    prev_titles = set(state.get("reading_titles", []))
+
     books = get_currently_reading(HARDCOVER_API_KEY)
-    if not books:
-        logger.info("No currently-reading books found on Hardcover")
+    current_titles = {b["title"] for b in books}
+
+    # Titles that were reading last sync but are gone now — check if they're finished
+    missing = list(prev_titles - current_titles)
+    finished_books = get_finished_books(HARDCOVER_API_KEY, missing) if missing else []
+    if finished_books:
+        logger.info(
+            "Detected %d finished book(s): %s",
+            len(finished_books),
+            ", ".join(f"'{b['title']}'" for b in finished_books),
+        )
+
+    if not books and not finished_books:
+        logger.info("No currently-reading or newly-finished books found on Hardcover")
+        _save_state([])
         return
 
-    logger.info("Found %d book(s) on Hardcover", len(books))
+    if books:
+        logger.info("Found %d currently-reading book(s) on Hardcover", len(books))
 
     # 2. Push to Goodreads (required)
     if GOODREADS_EMAIL and GOODREADS_PASSWORD:
@@ -61,6 +103,8 @@ def run_sync() -> None:
             if gr.login():
                 for book in books:
                     gr.update_progress(book)
+                for book in finished_books:
+                    gr.mark_finished(book)
             else:
                 logger.error("Goodreads login failed — skipping Goodreads sync")
     else:
@@ -74,10 +118,15 @@ def run_sync() -> None:
             if sg.login():
                 for book in books:
                     sg.update_progress(book)
+                for book in finished_books:
+                    sg.mark_finished(book)
             else:
                 logger.error("StoryGraph login failed — skipping StoryGraph sync")
     else:
         logger.info("StoryGraph credentials not set — skipping StoryGraph sync")
+
+    # 4. Save state for next sync
+    _save_state(list(current_titles))
 
 
 # ---------------------------------------------------------------------------

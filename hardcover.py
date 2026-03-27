@@ -31,6 +31,24 @@ query GetCurrentlyReading {
 }
 """
 
+CHECK_FINISHED_QUERY = """
+query CheckFinished($titles: [String!]!) {
+  me {
+    user_books(where: {book: {title: {_in: $titles}}, status_id: {_eq: 3}}) {
+      book {
+        title
+        pages
+        contributions {
+          author {
+            name
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
 
 def get_currently_reading(api_key: str) -> list[dict]:
     """Fetch currently-reading books from Hardcover via GraphQL.
@@ -105,4 +123,52 @@ def get_currently_reading(api_key: str) -> list[dict]:
 
     except requests.RequestException as exc:
         logger.error("Hardcover request failed: %s", exc)
+        return []
+
+
+def get_finished_books(api_key: str, titles: list[str]) -> list[dict]:
+    """Check whether any of the given titles are now marked as Read (status_id=3).
+
+    Returns a list of dicts with keys: title, author
+    """
+    if not titles:
+        return []
+
+    token = api_key.removeprefix("Bearer ").strip()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        resp = requests.post(
+            GRAPHQL_URL,
+            json={"query": CHECK_FINISHED_QUERY, "variables": {"titles": titles}},
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        if "errors" in data:
+            logger.error("Hardcover API errors checking finished books: %s", data["errors"])
+            return []
+
+        me_data = (data.get("data") or {}).get("me") or []
+        me = me_data[0] if me_data else {}
+        user_books = me.get("user_books", [])
+
+        finished = []
+        for ub in user_books:
+            book = ub.get("book") or {}
+            contribs = book.get("contributions") or []
+            author = "Unknown"
+            if contribs:
+                author = ((contribs[0].get("author")) or {}).get("name", "Unknown")
+            finished.append({"title": book.get("title", "Unknown"), "author": author})
+
+        return finished
+
+    except requests.RequestException as exc:
+        logger.error("Hardcover request failed checking finished books: %s", exc)
         return []
