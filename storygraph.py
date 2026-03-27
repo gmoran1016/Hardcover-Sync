@@ -227,40 +227,72 @@ class StorygraphSync:
     def _do_update_progress(
         self, pages: int | None, pct: float | None, total_pages: int | None
     ) -> bool:
-        """Click Track progress, fill the confirmed form fields, submit."""
+        """Open the inline progress form and submit updated page count."""
         try:
             wait = WebDriverWait(self.driver, 8)
 
-            # "Track progress" is the confirmed button class on the StoryGraph book page
-            track_btn = wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".track-progress-button"))
+            # Dismiss any notification banners
+            try:
+                for btn in self.driver.find_elements(
+                    By.XPATH, '//button[normalize-space(.)="Dismiss"]'
+                ):
+                    if btn.is_displayed():
+                        self.driver.execute_script("arguments[0].click();", btn)
+                        time.sleep(0.5)
+                        logger.debug("Dismissed StoryGraph notification banner")
+            except Exception:
+                pass
+
+            # Click the pencil (edit-progress) button to open the inline form.
+            # There are two (desktop + mobile); click the visible one.
+            edit_btns = wait.until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "button.edit-progress"))
             )
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", track_btn)
-            self.driver.execute_script("arguments[0].click();", track_btn)
+            edit_btn = next((b for b in edit_btns if b.is_displayed()), None)
+            if edit_btn is None:
+                logger.error("edit-progress button not visible on StoryGraph book page")
+                return False
+
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", edit_btn)
+            self.driver.execute_script("arguments[0].click();", edit_btn)
             time.sleep(1)
 
-            # Confirmed field: read_status[progress_number] (type=number) = pages read
-            progress_input = wait.until(
-                EC.presence_of_element_located((
+            # Find the visible progress number input
+            all_inputs = wait.until(
+                EC.presence_of_all_elements_located((
                     By.CSS_SELECTOR, "input#read_status_progress_number",
                 ))
             )
+            progress_input = next((el for el in all_inputs if el.is_displayed()), None)
+            if progress_input is None:
+                logger.error("Progress input not visible after opening form")
+                return False
 
+            value_to_set = None
             if pages is not None:
-                progress_input.clear()
-                progress_input.send_keys(str(pages))
+                value_to_set = str(pages)
             elif pct is not None and total_pages:
-                calculated = int(total_pages * pct / 100)
-                progress_input.clear()
-                progress_input.send_keys(str(calculated))
+                value_to_set = str(int(total_pages * pct / 100))
             else:
                 logger.warning("No pages or percent available for StoryGraph update")
                 return False
 
-            # Submit: input[type="submit"][value="Save"] inside the Track progress form
-            save_btn = self.driver.find_element(
-                By.CSS_SELECTOR, 'input[type="submit"][value="Save"]'
+            # Clear and type the value natively so all browser events fire correctly
+            progress_input.click()
+            progress_input.clear()
+            # Also clear via JS in case .clear() leaves stale content
+            self.driver.execute_script("arguments[0].value = '';", progress_input)
+            progress_input.send_keys(value_to_set)
+
+            # Click the visible Save button
+            save_btns = self.driver.find_elements(
+                By.CSS_SELECTOR, "input.progress-tracker-update-button"
             )
+            save_btn = next((b for b in save_btns if b.is_displayed()), None)
+            if save_btn is None:
+                logger.error("Save button not found/visible after filling progress")
+                return False
+
             self.driver.execute_script("arguments[0].click();", save_btn)
             time.sleep(2)
 
