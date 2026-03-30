@@ -10,6 +10,8 @@ import os
 import signal
 import time
 
+VERSION = "1.0.0"
+
 from dotenv import load_dotenv
 
 from hardcover import get_currently_reading, get_finished_books
@@ -134,7 +136,7 @@ def run_sync() -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    logger.info("Hardcover Sync starting (interval: %d min)", SYNC_INTERVAL // 60)
+    logger.info("Hardcover Sync v%s starting (interval: %d min)", VERSION, SYNC_INTERVAL // 60)
 
     running = True
 

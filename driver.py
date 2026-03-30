@@ -32,6 +32,15 @@ def create_driver() -> webdriver.Chrome:
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-extensions")
     options.add_argument("--log-level=3")          # Silence Chrome's stderr noise
+    # Reduce memory footprint to prevent OOM crashes in Docker
+    options.add_argument("--single-process")
+    options.add_argument("--disable-setuid-sandbox")
+    options.add_argument("--memory-pressure-off")
+    options.add_argument("--max_old_space_size=512")
+    options.add_argument("--disk-cache-size=1")
+    options.add_argument("--media-cache-size=1")
+    options.add_argument("--disable-application-cache")
+    options.add_argument("--aggressive-cache-discard")
     options.add_experimental_option("excludeSwitches", ["enable-logging"])
     # Reduce bot-detection signals
     options.add_argument("--disable-blink-features=AutomationControlled")
