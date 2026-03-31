@@ -10,7 +10,7 @@ import os
 import signal
 import time
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 from dotenv import load_dotenv
 
@@ -53,16 +53,33 @@ def _load_state() -> dict:
         with open(STATE_FILE) as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
-        return {"reading_titles": []}
+        return {"reading_titles": [], "books": []}
 
 
-def _save_state(reading_titles: list[str]) -> None:
+def _save_state(reading_titles: list[str], books: list[dict]) -> None:
     try:
         os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
         with open(STATE_FILE, "w") as f:
-            json.dump({"reading_titles": reading_titles}, f)
+            json.dump({"reading_titles": reading_titles, "books": books}, f)
     except OSError as exc:
         logger.warning("Could not save sync state: %s", exc)
+
+
+def _books_changed(prev_books: list[dict], curr_books: list[dict]) -> bool:
+    """Return True if the book list or any reading progress has changed."""
+    if len(prev_books) != len(curr_books):
+        return True
+    prev_map = {b["title"]: b for b in prev_books}
+    curr_map = {b["title"]: b for b in curr_books}
+    if set(prev_map) != set(curr_map):
+        return True
+    for title, curr in curr_map.items():
+        prev = prev_map[title]
+        if curr.get("progress_pages") != prev.get("progress_pages"):
+            return True
+        if curr.get("progress_percent") != prev.get("progress_percent"):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +94,7 @@ def run_sync() -> None:
     # 1. Fetch current reading list and compare with last sync to detect finished books
     state = _load_state()
     prev_titles = set(state.get("reading_titles", []))
+    prev_books = state.get("books", [])
 
     books = get_currently_reading(HARDCOVER_API_KEY)
     current_titles = {b["title"] for b in books}
@@ -93,11 +111,16 @@ def run_sync() -> None:
 
     if not books and not finished_books:
         logger.info("No currently-reading or newly-finished books found on Hardcover")
-        _save_state([])
+        _save_state([], [])
         return
 
     if books:
         logger.info("Found %d currently-reading book(s) on Hardcover", len(books))
+
+    # Skip pushing updates if nothing changed on Hardcover
+    if not finished_books and not _books_changed(prev_books, books):
+        logger.info("No changes detected on Hardcover — skipping sync")
+        return
 
     # 2. Push to Goodreads (required)
     if GOODREADS_EMAIL and GOODREADS_PASSWORD:
@@ -128,7 +151,7 @@ def run_sync() -> None:
         logger.info("StoryGraph credentials not set — skipping StoryGraph sync")
 
     # 4. Save state for next sync
-    _save_state(list(current_titles))
+    _save_state(list(current_titles), books)
 
 
 # ---------------------------------------------------------------------------
