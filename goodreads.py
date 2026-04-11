@@ -181,8 +181,8 @@ class GoodreadsSync:
             cookie.pop("sameSite", None)  # can cause errors in some versions
             try:
                 self.driver.add_cookie(cookie)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Skipped cookie '%s': %s", cookie.get("name"), exc)
 
         self.driver.refresh()
         time.sleep(2)

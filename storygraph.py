@@ -81,8 +81,8 @@ class StorygraphSync:
             cookie.pop("sameSite", None)
             try:
                 self.driver.add_cookie(cookie)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Skipped cookie '%s': %s", cookie.get("name"), exc)
         self.driver.refresh()
         time.sleep(2)
 
