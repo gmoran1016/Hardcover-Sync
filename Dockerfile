@@ -21,6 +21,7 @@ COPY main.py hardcover.py goodreads.py storygraph.py driver.py ./
 # ---- non-root user ----
 RUN useradd -m -u 1000 appuser && chown -R appuser /app
 USER appuser
+RUN mkdir /app/state
 
 # ---- runtime config ----
 ENV PYTHONUNBUFFERED=1 \

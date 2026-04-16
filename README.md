@@ -126,11 +126,14 @@ Add these **Environment Variables** (click "+ Add another Path, Port, Variable, 
 | `STORYGRAPH_PASSWORD` | Your StoryGraph password (or leave blank) |
 | `SYNC_INTERVAL_MINUTES` | `30` |
 
-Add this **Volume mapping**:
+Add these **Volume mappings**:
 
 | Container path | Host path |
 |---|---|
 | `/app/cookies` | `/mnt/user/appdata/hardcover-sync/cookies` |
+| `/app/state` | `/mnt/user/appdata/hardcover-sync/state` |
+
+> The `/app/state` mapping is optional but recommended — it stores sync state so the app can skip unchanged books between restarts. Without it, a harmless warning appears in the logs and every sync will push progress regardless of whether it changed.
 
 **4. Click Apply.**
 
@@ -185,3 +188,6 @@ Make sure `shm_size: "256mb"` is present in your compose file. Chrome needs more
 
 ### Percentages differ between platforms
 Different platforms may have your book in a different edition with a different page count. This is expected — the sync pushes the absolute page number, and each platform calculates its own percentage.
+
+### "Could not save sync state: Permission denied"
+The `/app/state` directory isn't writable. If using Docker Compose, make sure the `sync-state` named volume is defined (see `docker-compose.yml`). If using Unraid's Docker UI, add a path mapping for `/app/state` → `/mnt/user/appdata/hardcover-sync/state` and create that folder first with `mkdir -p /mnt/user/appdata/hardcover-sync/state`.

@@ -10,7 +10,7 @@ import os
 import signal
 import time
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 
 from dotenv import load_dotenv
 
@@ -40,8 +40,8 @@ STORYGRAPH_EMAIL = os.getenv("STORYGRAPH_EMAIL", "")
 STORYGRAPH_PASSWORD = os.getenv("STORYGRAPH_PASSWORD", "")
 SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL_MINUTES", "30")) * 60
 
-# Stored alongside cookies so it persists in Docker volumes
-STATE_FILE = os.path.join(os.path.dirname(__file__), "cookies", "sync_state.json")
+# Stored in a dedicated named volume so appuser can always write to it
+STATE_FILE = os.path.join(os.path.dirname(__file__), "state", "sync_state.json")
 
 
 # ---------------------------------------------------------------------------

@@ -14,3 +14,8 @@ services:
       # Mount the cookies folder so the container can use your saved sessions.
       # Run 'python setup_cookies.py' on your local machine first.
       - ./cookies:/app/cookies
+      # Named volume so appuser can write sync state regardless of host permissions
+      - sync-state:/app/state
+
+volumes:
+  sync-state:
