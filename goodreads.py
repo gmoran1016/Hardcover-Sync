@@ -144,13 +144,26 @@ class GoodreadsSync:
                 book_url = self._search_book(title, book.get("author"))
                 if book_url:
                     self.driver.get(book_url)
-                    time.sleep(2)
-                    self._ensure_currently_reading()
-                    time.sleep(2)
+                    time.sleep(3)
+                    shelved = self._ensure_currently_reading()
+                    if not shelved:
+                        logger.error(
+                            "Could not add '%s' to Currently Reading shelf — "
+                            "check DEBUG logs for shelf button details",
+                            title,
+                        )
+                        return False
+                    # Give Goodreads time to propagate the shelf change to the home widget
+                    time.sleep(4)
                     self.driver.get(GOODREADS_URL)
-                    time.sleep(2)
+                    time.sleep(3)
                     if not self._click_update_progress_for(title):
-                        logger.error("Still can't find Update progress for '%s'", title)
+                        logger.error(
+                            "Still can't find Update progress for '%s' after adding to shelf — "
+                            "the Currently Reading widget may take longer to appear; "
+                            "try running sync again in a few minutes",
+                            title,
+                        )
                         return False
 
             time.sleep(1)
@@ -315,34 +328,66 @@ class GoodreadsSync:
 
         return None
 
-    def _ensure_currently_reading(self) -> None:
-        """Click the shelf button and pick 'Currently reading' from the dropdown."""
+    def _ensure_currently_reading(self) -> bool:
+        """Click the shelf button and pick 'Currently reading' from the dropdown.
+
+        Returns True if the book is (or was already) on the Currently Reading shelf.
+        """
         try:
-            wait = WebDriverWait(self.driver, 6)
+            wait = WebDriverWait(self.driver, 8)
+            # Goodreads uses several button styles for the shelf selector depending
+            # on whether the book is already shelved and which UI version is served.
             shelf_btn = wait.until(
                 EC.presence_of_element_located((
-                    By.CSS_SELECTOR,
-                    "button.Button--secondary.Button--block",
+                    By.XPATH,
+                    "//button[contains(@class,'Button--block') or "
+                    "contains(@class,'wantToReadBtn') or "
+                    "contains(@class,'shelving-control') or "
+                    "contains(normalize-space(.),'Want to Read') or "
+                    "contains(normalize-space(.),'Currently reading') or "
+                    "contains(normalize-space(.),'Read')]"
+                    "[not(contains(normalize-space(.),'Update progress'))]"
                 ))
             )
-            if "currently reading" in shelf_btn.text.lower():
-                return
+            btn_text = shelf_btn.text.lower()
+            logger.debug("Shelf button found, text: %r", shelf_btn.text.strip())
 
+            if "currently reading" in btn_text:
+                logger.debug("Book already on Currently Reading shelf")
+                return True
+
+            self.driver.execute_script(
+                "arguments[0].scrollIntoView({block:'center'});", shelf_btn
+            )
+            time.sleep(0.3)
             shelf_btn.click()
-            time.sleep(0.5)
-            WebDriverWait(self.driver, 5).until(
+            time.sleep(0.8)
+
+            cr_option = WebDriverWait(self.driver, 6).until(
                 EC.element_to_be_clickable((
                     By.XPATH,
-                    '//button[normalize-space(.)="Currently reading"]',
+                    '//button[normalize-space(.)="Currently reading"]'
+                    ' | //a[normalize-space(.)="Currently reading"]'
+                    ' | //li[normalize-space(.)="Currently reading"]',
                 ))
-            ).click()
-            time.sleep(1)
+            )
+            cr_option.click()
+            time.sleep(1.5)
             logger.info("Added book to Currently Reading shelf")
+            return True
 
-        except (TimeoutException, NoSuchElementException):
-            pass
+        except TimeoutException:
+            logger.warning(
+                "_ensure_currently_reading: timed out finding shelf button or dropdown option — "
+                "Goodreads UI may have changed or the book page did not load correctly"
+            )
+            return False
+        except NoSuchElementException as exc:
+            logger.warning("_ensure_currently_reading: element not found — %s", exc)
+            return False
         except Exception as exc:
-            logger.debug("_ensure_currently_reading: %s", exc)
+            logger.warning("_ensure_currently_reading: unexpected error — %s", exc)
+            return False
 
     # ------------------------------------------------------------------
     # Home-page progress update (the only place Goodreads shows the form)
