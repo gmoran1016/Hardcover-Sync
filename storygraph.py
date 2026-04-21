@@ -298,42 +298,43 @@ class StorygraphSync:
     def _ensure_currently_reading(self) -> bool:
         """Click the 'currently reading' shelf button on the current StoryGraph book page."""
         try:
-            # The dropdown is hidden until the expand button is clicked.
-            # There are desktop + mobile duplicates; use the visible one.
+            # Wait for the expand button to be present, then JS-click it to open the dropdown.
+            # The read-status-button items are always in the DOM but inside a hidden parent;
+            # is_displayed() returns False for them even after the dropdown opens, so we
+            # use JS clicks throughout to bypass visibility checks.
             try:
                 WebDriverWait(self.driver, 8).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, ".expand-dropdown-button"))
                 )
-            except TimeoutException:
-                pass
-
-            expand_btns = self.driver.find_elements(By.CSS_SELECTOR, ".expand-dropdown-button")
-            expand_btn = next((b for b in expand_btns if b.is_displayed()), None)
-            if expand_btn:
-                self.driver.execute_script("arguments[0].scrollIntoView(true);", expand_btn)
-                self.driver.execute_script("arguments[0].click();", expand_btn)
+                clicked = self.driver.execute_script("""
+                    var btns = document.querySelectorAll('.expand-dropdown-button');
+                    for (var b of btns) {
+                        if (b.offsetParent !== null) { b.click(); return true; }
+                    }
+                    // Fall back: click the first one regardless
+                    if (btns.length > 0) { btns[0].click(); return true; }
+                    return false;
+                """)
+                logger.debug("StoryGraph expand-dropdown-button clicked: %s", clicked)
                 time.sleep(1)
-
-            # Wait for the read-status-button items to appear
-            try:
-                WebDriverWait(self.driver, 8).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "button.read-status-button"))
-                )
             except TimeoutException:
-                pass
+                logger.warning("StoryGraph expand-dropdown-button not found within 8s")
 
-            cr_btns = self.driver.find_elements(By.CSS_SELECTOR, "button.read-status-button")
-            cr_btn = next(
-                (b for b in cr_btns if "currently reading" in b.text.lower() and b.is_displayed()),
-                None,
-            )
-            if cr_btn is None:
-                logger.warning(
-                    "'Currently reading' shelf button not found on StoryGraph page "
-                    "(found %d read-status-buttons total, %d visible)",
-                    len(cr_btns),
-                    sum(1 for b in cr_btns if b.is_displayed()),
-                )
+            # JS-click the 'currently reading' button regardless of visibility
+            result = self.driver.execute_script("""
+                var btns = document.querySelectorAll('button.read-status-button');
+                for (var b of btns) {
+                    if (b.textContent.toLowerCase().includes('currently reading')) {
+                        b.click();
+                        return 'clicked';
+                    }
+                }
+                return 'not found (' + btns.length + ' read-status-buttons in DOM)';
+            """)
+            logger.debug("StoryGraph read-status-button JS result: %s", result)
+
+            if "clicked" not in result:
+                logger.warning("'Currently reading' shelf button not found on StoryGraph page: %s", result)
                 return False
 
             self.driver.execute_script("arguments[0].click();", cr_btn)
