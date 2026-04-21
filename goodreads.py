@@ -363,7 +363,7 @@ class GoodreadsSync:
             shelf_btn.click()
             time.sleep(0.8)
 
-            cr_option = WebDriverWait(self.driver, 6).until(
+            cr_option = WebDriverWait(self.driver, 15).until(
                 EC.element_to_be_clickable((
                     By.XPATH,
                     '//button[normalize-space(.)="Currently reading"]'

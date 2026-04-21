@@ -213,7 +213,7 @@ class StorygraphSync:
                 return False
 
             self.driver.get(book_url)
-            time.sleep(2)
+            time.sleep(4)
 
             return self._do_update_progress(pages, pct, total)
 
@@ -300,12 +300,27 @@ class StorygraphSync:
         try:
             # The dropdown is hidden until the expand button is clicked.
             # There are desktop + mobile duplicates; use the visible one.
+            try:
+                WebDriverWait(self.driver, 8).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, ".expand-dropdown-button"))
+                )
+            except TimeoutException:
+                pass
+
             expand_btns = self.driver.find_elements(By.CSS_SELECTOR, ".expand-dropdown-button")
             expand_btn = next((b for b in expand_btns if b.is_displayed()), None)
             if expand_btn:
                 self.driver.execute_script("arguments[0].scrollIntoView(true);", expand_btn)
                 self.driver.execute_script("arguments[0].click();", expand_btn)
-                time.sleep(0.5)
+                time.sleep(1)
+
+            # Wait for the read-status-button items to appear
+            try:
+                WebDriverWait(self.driver, 8).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "button.read-status-button"))
+                )
+            except TimeoutException:
+                pass
 
             cr_btns = self.driver.find_elements(By.CSS_SELECTOR, "button.read-status-button")
             cr_btn = next(
@@ -313,7 +328,12 @@ class StorygraphSync:
                 None,
             )
             if cr_btn is None:
-                logger.warning("'Currently reading' shelf button not found on StoryGraph page")
+                logger.warning(
+                    "'Currently reading' shelf button not found on StoryGraph page "
+                    "(found %d read-status-buttons total, %d visible)",
+                    len(cr_btns),
+                    sum(1 for b in cr_btns if b.is_displayed()),
+                )
                 return False
 
             self.driver.execute_script("arguments[0].click();", cr_btn)
