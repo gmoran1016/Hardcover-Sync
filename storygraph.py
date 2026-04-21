@@ -264,17 +264,66 @@ class StorygraphSync:
         return None
 
     def _extract_href(self, element) -> str | None:
-        """Walk up the DOM to find an ancestor <a> tag with a href."""
+        """Find the book page URL from a search result element.
+
+        StoryGraph search results wrap the title in a series link (/series/...),
+        so we must look for a /books/<uuid> link inside the containing .book-pane
+        card rather than just walking up to the nearest ancestor <a>.
+        """
         try:
-            link = element.find_element(By.XPATH, "./ancestor-or-self::a[@href]")
-            return link.get_attribute("href")
+            # Walk up to the book-pane card, then find the first /books/<uuid> link
+            card = element.find_element(
+                By.XPATH, "./ancestor::div[contains(@class,'book-pane')][1]"
+            )
+            links = card.find_elements(By.CSS_SELECTOR, "a[href*='/books/']")
+            for link in links:
+                path = link.get_attribute("href") or ""
+                # Skip /books/new and /books/.../editions
+                if "/books/new" in path or "/editions" in path:
+                    continue
+                if "/books/" in path:
+                    return path
         except NoSuchElementException:
             pass
+
+        # Fallback: any ancestor <a> with /books/ in href
         try:
-            link = element.find_element(By.CSS_SELECTOR, "a[href]")
+            link = element.find_element(
+                By.XPATH, "./ancestor-or-self::a[contains(@href,'/books/')]"
+            )
             return link.get_attribute("href")
         except NoSuchElementException:
             return None
+
+    def _ensure_currently_reading(self) -> bool:
+        """Click the 'currently reading' shelf button on the current StoryGraph book page."""
+        try:
+            # The dropdown is hidden until the expand button is clicked.
+            # There are desktop + mobile duplicates; use the visible one.
+            expand_btns = self.driver.find_elements(By.CSS_SELECTOR, ".expand-dropdown-button")
+            expand_btn = next((b for b in expand_btns if b.is_displayed()), None)
+            if expand_btn:
+                self.driver.execute_script("arguments[0].scrollIntoView(true);", expand_btn)
+                self.driver.execute_script("arguments[0].click();", expand_btn)
+                time.sleep(0.5)
+
+            cr_btns = self.driver.find_elements(By.CSS_SELECTOR, "button.read-status-button")
+            cr_btn = next(
+                (b for b in cr_btns if "currently reading" in b.text.lower() and b.is_displayed()),
+                None,
+            )
+            if cr_btn is None:
+                logger.warning("'Currently reading' shelf button not found on StoryGraph page")
+                return False
+
+            self.driver.execute_script("arguments[0].click();", cr_btn)
+            time.sleep(2)
+            logger.info("Added book to Currently Reading on StoryGraph")
+            return True
+
+        except Exception as exc:
+            logger.warning("_ensure_currently_reading (StoryGraph): %s", exc)
+            return False
 
     def _do_update_progress(
         self, pages: int | None, pct: float | None, total_pages: int | None
@@ -295,11 +344,22 @@ class StorygraphSync:
             except Exception:
                 pass
 
+            # If the book isn't "currently reading" the edit-progress button won't exist.
+            # Detect this and move it to that shelf first.
+            edit_btns = self.driver.find_elements(By.CSS_SELECTOR, "button.edit-progress")
+            if not any(b.is_displayed() for b in edit_btns):
+                if not self._ensure_currently_reading():
+                    logger.error(
+                        "Could not move book to Currently Reading on StoryGraph"
+                    )
+                    return False
+                # Re-fetch after shelf change
+                edit_btns = wait.until(
+                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, "button.edit-progress"))
+                )
+
             # Click the pencil (edit-progress) button to open the inline form.
             # There are two (desktop + mobile); click the visible one.
-            edit_btns = wait.until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "button.edit-progress"))
-            )
             edit_btn = next((b for b in edit_btns if b.is_displayed()), None)
             if edit_btn is None:
                 logger.error("edit-progress button not visible on StoryGraph book page")
