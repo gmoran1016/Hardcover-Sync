@@ -144,7 +144,7 @@ class GoodreadsSync:
                 book_url = self._search_book(title, book.get("author"))
                 if book_url:
                     self.driver.get(book_url)
-                    time.sleep(3)
+                    time.sleep(5)
                     shelved = self._ensure_currently_reading()
                     if not shelved:
                         logger.error(
@@ -334,7 +334,7 @@ class GoodreadsSync:
         Returns True if the book is (or was already) on the Currently Reading shelf.
         """
         try:
-            wait = WebDriverWait(self.driver, 8)
+            wait = WebDriverWait(self.driver, 20)
             # Goodreads uses several button styles for the shelf selector depending
             # on whether the book is already shelved and which UI version is served.
             shelf_btn = wait.until(
