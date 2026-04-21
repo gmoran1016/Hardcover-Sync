@@ -337,7 +337,6 @@ class StorygraphSync:
                 logger.warning("'Currently reading' shelf button not found on StoryGraph page: %s", result)
                 return False
 
-            self.driver.execute_script("arguments[0].click();", cr_btn)
             time.sleep(2)
             logger.info("Added book to Currently Reading on StoryGraph")
             return True
