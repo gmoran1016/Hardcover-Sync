@@ -368,38 +368,36 @@ class StorygraphSync:
             # If the book isn't "currently reading" the edit-progress button won't exist.
             # Detect this and move it to that shelf first.
             edit_btns = self.driver.find_elements(By.CSS_SELECTOR, "button.edit-progress")
-            if not any(b.is_displayed() for b in edit_btns):
+            if not edit_btns:
                 if not self._ensure_currently_reading():
                     logger.error(
                         "Could not move book to Currently Reading on StoryGraph"
                     )
                     return False
-                # Re-fetch after shelf change
-                edit_btns = wait.until(
-                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, "button.edit-progress"))
-                )
+                # Give the page time to update after shelf change, then re-fetch
+                time.sleep(3)
+                try:
+                    edit_btns = WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "button.edit-progress"))
+                    )
+                except TimeoutException:
+                    logger.error("edit-progress button never appeared after shelving")
+                    return False
 
-            # Click the pencil (edit-progress) button to open the inline form.
-            # There are two (desktop + mobile); click the visible one.
-            edit_btn = next((b for b in edit_btns if b.is_displayed()), None)
-            if edit_btn is None:
-                logger.error("edit-progress button not visible on StoryGraph book page")
+            # JS-click the edit-progress button (use first one found; visibility unreliable in Docker)
+            clicked = self.driver.execute_script("""
+                var btns = document.querySelectorAll('button.edit-progress');
+                for (var b of btns) {
+                    if (b.offsetParent !== null) { b.scrollIntoView(true); b.click(); return 'visible'; }
+                }
+                if (btns.length > 0) { btns[0].scrollIntoView(true); btns[0].click(); return 'hidden'; }
+                return 'none';
+            """)
+            logger.debug("edit-progress click result: %s", clicked)
+            if clicked == 'none':
+                logger.error("edit-progress button not found on StoryGraph book page")
                 return False
-
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", edit_btn)
-            self.driver.execute_script("arguments[0].click();", edit_btn)
             time.sleep(1)
-
-            # Find the visible progress number input
-            all_inputs = wait.until(
-                EC.presence_of_all_elements_located((
-                    By.CSS_SELECTOR, "input#read_status_progress_number",
-                ))
-            )
-            progress_input = next((el for el in all_inputs if el.is_displayed()), None)
-            if progress_input is None:
-                logger.error("Progress input not visible after opening form")
-                return False
 
             value_to_set = None
             if pages is not None:
@@ -410,23 +408,50 @@ class StorygraphSync:
                 logger.warning("No pages or percent available for StoryGraph update")
                 return False
 
-            # Clear and type the value natively so all browser events fire correctly
-            progress_input.click()
-            progress_input.clear()
-            # Also clear via JS in case .clear() leaves stale content
-            self.driver.execute_script("arguments[0].value = '';", progress_input)
-            progress_input.send_keys(value_to_set)
-
-            # Click the visible Save button
-            save_btns = self.driver.find_elements(
-                By.CSS_SELECTOR, "input.progress-tracker-update-button"
-            )
-            save_btn = next((b for b in save_btns if b.is_displayed()), None)
-            if save_btn is None:
-                logger.error("Save button not found/visible after filling progress")
+            # Wait for the progress input, then set value + fire events via JS so
+            # Stimulus/Rails UJS picks up the change regardless of visibility state.
+            try:
+                wait.until(
+                    EC.presence_of_element_located((
+                        By.CSS_SELECTOR, "input#read_status_progress_number",
+                    ))
+                )
+            except TimeoutException:
+                logger.error("Progress input never appeared after clicking edit-progress")
                 return False
 
-            self.driver.execute_script("arguments[0].click();", save_btn)
+            result = self.driver.execute_script("""
+                var inputs = document.querySelectorAll('input#read_status_progress_number');
+                var inp = null;
+                for (var i of inputs) {
+                    if (i.offsetParent !== null) { inp = i; break; }
+                }
+                if (!inp && inputs.length > 0) inp = inputs[0];
+                if (!inp) return 'no input';
+                inp.focus();
+                inp.value = arguments[0];
+                inp.dispatchEvent(new Event('input', {bubbles: true}));
+                inp.dispatchEvent(new Event('change', {bubbles: true}));
+                return 'set:' + inp.value;
+            """, value_to_set)
+            logger.debug("Progress input JS result: %s", result)
+            if not result or not result.startswith("set:"):
+                logger.error("Could not set progress input value: %s", result)
+                return False
+
+            # Click the Save button via JS
+            save_result = self.driver.execute_script("""
+                var btns = document.querySelectorAll('input.progress-tracker-update-button');
+                for (var b of btns) {
+                    if (b.offsetParent !== null) { b.click(); return 'visible'; }
+                }
+                if (btns.length > 0) { btns[0].click(); return 'hidden'; }
+                return 'none';
+            """)
+            logger.debug("Save button JS result: %s", save_result)
+            if save_result == 'none':
+                logger.error("Save button not found after filling progress")
+                return False
             time.sleep(2)
 
             logger.info(

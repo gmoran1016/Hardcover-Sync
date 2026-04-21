@@ -360,7 +360,7 @@ class GoodreadsSync:
                 "arguments[0].scrollIntoView({block:'center'});", shelf_btn
             )
             time.sleep(0.3)
-            shelf_btn.click()
+            self.driver.execute_script("arguments[0].click();", shelf_btn)
             time.sleep(0.8)
 
             cr_option = WebDriverWait(self.driver, 15).until(
