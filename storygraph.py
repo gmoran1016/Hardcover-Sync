@@ -364,37 +364,48 @@ class StorygraphSync:
             except Exception:
                 pass
 
-            # If the book isn't "currently reading" the edit-progress button won't exist.
-            # Detect this and move it to that shelf first.
-            edit_btns = self.driver.find_elements(By.CSS_SELECTOR, "button.edit-progress")
-            if not edit_btns:
+            # The "Track progress" button is hidden until the expand-dropdown-button is clicked.
+            # Click expand first, then check for track-progress-button. If absent, the book
+            # isn't on the Currently Reading shelf yet — add it, then repeat.
+            self.driver.execute_script("""
+                var btns = document.querySelectorAll('.expand-dropdown-button');
+                for (var b of btns) { if (b.offsetParent !== null) { b.click(); return; } }
+                if (btns.length > 0) btns[0].click();
+            """)
+            time.sleep(1)
+
+            track_btn = self.driver.find_elements(By.CSS_SELECTOR, "button.track-progress-button")
+            if not track_btn:
                 if not self._ensure_currently_reading():
-                    logger.error(
-                        "Could not move book to Currently Reading on StoryGraph"
-                    )
+                    logger.error("Could not move book to Currently Reading on StoryGraph")
                     return False
-                # Give the page time to update after shelf change, then re-fetch
+                # After shelving, expand again and wait for track-progress-button
                 time.sleep(3)
+                self.driver.execute_script("""
+                    var btns = document.querySelectorAll('.expand-dropdown-button');
+                    for (var b of btns) { if (b.offsetParent !== null) { b.click(); return; } }
+                    if (btns.length > 0) btns[0].click();
+                """)
                 try:
-                    edit_btns = WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "button.edit-progress"))
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "button.track-progress-button"))
                     )
                 except TimeoutException:
-                    logger.error("edit-progress button never appeared after shelving")
+                    logger.error("track-progress-button never appeared after shelving")
                     return False
 
-            # JS-click the edit-progress button (use first one found; visibility unreliable in Docker)
+            # JS-click the track-progress-button to open the inline form
             clicked = self.driver.execute_script("""
-                var btns = document.querySelectorAll('button.edit-progress');
+                var btns = document.querySelectorAll('button.track-progress-button');
                 for (var b of btns) {
                     if (b.offsetParent !== null) { b.scrollIntoView(true); b.click(); return 'visible'; }
                 }
                 if (btns.length > 0) { btns[0].scrollIntoView(true); btns[0].click(); return 'hidden'; }
                 return 'none';
             """)
-            logger.debug("edit-progress click result: %s", clicked)
+            logger.debug("track-progress-button click result: %s", clicked)
             if clicked == 'none':
-                logger.error("edit-progress button not found on StoryGraph book page")
+                logger.error("track-progress-button not found on StoryGraph book page")
                 return False
             time.sleep(1)
 
@@ -416,7 +427,7 @@ class StorygraphSync:
                     ))
                 )
             except TimeoutException:
-                logger.error("Progress input never appeared after clicking edit-progress")
+                logger.error("Progress input never appeared after clicking track-progress-button")
                 return False
 
             result = self.driver.execute_script("""
