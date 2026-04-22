@@ -19,7 +19,7 @@ Hardcover is always the source of truth — progress is never written back.
 
 ## Prerequisites — save cookies first
 
-Because Goodreads uses Amazon's login infrastructure (which blocks headless browsers with CAPTCHAs), the app authenticates using saved browser cookies instead of a username/password login.
+Goodreads uses Amazon's login infrastructure which blocks headless browsers with a CAPTCHA, so the app authenticates via saved browser cookies rather than form login. StoryGraph does not have this restriction and will fall back to form login automatically if no cookies are found, but saving cookies for it is still recommended for reliability.
 
 **Run this once on any machine that has a display (your PC, laptop, etc.):**
 
@@ -30,7 +30,7 @@ pip install -r requirements.txt
 python setup_cookies.py
 ```
 
-A Chrome window will open. Log in to Goodreads (and StoryGraph if you use it), then press Enter in the terminal. Cookies are saved to the `cookies/` folder.
+The script will ask which platforms to set up. A Chrome window opens — log in to each site, then press Enter in the terminal. Cookies are saved to the `cookies/` folder.
 
 You will need to re-run `setup_cookies.py` if you are ever logged out (typically every few weeks/months).
 
@@ -113,7 +113,7 @@ scp cookies/storygraph.json root@UNRAID_IP:/mnt/user/appdata/hardcover-sync/cook
 | Name | `hardcover-sync` |
 | Repository | `ghcr.io/gmoran1016/hardcover-sync:latest` |
 | Network type | `bridge` |
-| Extra Parameters | `--shm-size=256m --restart=unless-stopped` |
+| Extra Parameters | `--shm-size=256m --cap-add=SYS_ADMIN --restart=unless-stopped` |
 
 Add these **Environment Variables** (click "+ Add another Path, Port, Variable, Label or Device"):
 
@@ -184,7 +184,9 @@ Re-run `python setup_cookies.py` on a machine with a display and re-copy the `co
 The book title on Hardcover must be close enough to the title on Goodreads/StoryGraph for the search to match. Very long subtitles or different editions can cause mismatches.
 
 ### Docker: Chrome crashes
-Make sure `shm_size: "256mb"` is present in your compose file. Chrome needs more shared memory than Docker's 64 MB default.
+Two things are required:
+- `shm_size: "256mb"` in your compose file (or `--shm-size=256m` in Unraid). Chrome needs more shared memory than Docker's 64 MB default.
+- `cap_add: SYS_ADMIN` (or `--cap-add=SYS_ADMIN` in Unraid). Chrome needs this capability as an alternative to `--no-sandbox` for its process isolation.
 
 ### Percentages differ between platforms
 Different platforms may have your book in a different edition with a different page count. This is expected — the sync pushes the absolute page number, and each platform calculates its own percentage.
