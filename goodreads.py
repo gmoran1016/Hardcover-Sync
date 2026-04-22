@@ -445,7 +445,7 @@ class GoodreadsSync:
     def _fill_home_page_progress_form(self, pages: int | None, pct: float | None) -> bool:
         """Fill and submit the inline progress form that appears after clicking Update progress."""
         try:
-            wait = WebDriverWait(self.driver, 8)
+            wait = WebDriverWait(self.driver, 15)
 
             if pages is not None:
                 # Ensure we're in pages mode (the # button)

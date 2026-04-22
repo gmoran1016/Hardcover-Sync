@@ -321,8 +321,10 @@ class StorygraphSync:
                 logger.warning("StoryGraph expand-dropdown-button not found within 8s")
 
             # JS-click the 'currently reading' button regardless of visibility.
-            # Try the full phrase first, then fall back to just "reading" in case
-            # StoryGraph shortens the label in some UI versions.
+            # Try the full phrase first, then fall back to just "reading".
+            # If NO "currently reading" option exists, the book is already on that
+            # shelf (the current status is excluded from the change options), so
+            # return a special sentinel so the caller knows to skip shelving.
             result = self.driver.execute_script("""
                 var btns = document.querySelectorAll('button.read-status-button');
                 var texts = [];
@@ -334,9 +336,16 @@ class StorygraphSync:
                         return 'clicked:' + t;
                     }
                 }
+                if (btns.length > 0) {
+                    return 'already-reading | texts: [' + texts.join(' | ') + ']';
+                }
                 return 'not found | texts: [' + texts.join(' | ') + ']';
             """)
             logger.debug("StoryGraph read-status-button JS result: %s", result)
+
+            if result.startswith("already-reading"):
+                logger.info("Book already on Currently Reading shelf on StoryGraph (no shelf change needed)")
+                return True
 
             if not result.startswith("clicked"):
                 logger.warning("'Currently reading' shelf button not found on StoryGraph page: %s", result)
@@ -349,6 +358,43 @@ class StorygraphSync:
         except Exception as exc:
             logger.warning("_ensure_currently_reading (StoryGraph): %s", exc)
             return False
+
+    def _find_track_progress_button(self):
+        """Return the track-progress button element, or None if not found.
+
+        Tries several selectors in order because StoryGraph has renamed this
+        button at least once (edit-progress → track-progress). Also falls back
+        to text-content matching in case the class changes again.
+        """
+        result = self.driver.execute_script("""
+            var selectors = [
+                'button.track-progress-button',
+                'button.edit-progress-button',
+            ];
+            for (var sel of selectors) {
+                var btns = document.querySelectorAll(sel);
+                if (btns.length > 0) return btns[0];
+            }
+            // Text-content fallback
+            var all = document.querySelectorAll('button');
+            for (var b of all) {
+                var t = b.textContent.toLowerCase().trim();
+                if (t.includes('track') && t.includes('progress')) return b;
+                if (t === 'update progress' || t === 'log progress') return b;
+            }
+            // Diagnostic: log all button classes present
+            var classes = Array.from(document.querySelectorAll('button[class]'))
+                .map(function(b){ return b.className; })
+                .filter(function(c, i, a){ return a.indexOf(c) === i; })
+                .join(' | ');
+            console.log('[hardcover-sync] buttons on page: ' + classes);
+            return null;
+        """)
+        if result is None:
+            logger.warning(
+                "Track progress button not found — check browser console logs for button classes"
+            )
+        return result
 
     def _do_update_progress(
         self, pages: int | None, pct: float | None, total_pages: int | None
@@ -379,7 +425,7 @@ class StorygraphSync:
             """)
             time.sleep(1)
 
-            track_btn = self.driver.find_elements(By.CSS_SELECTOR, "button.track-progress-button")
+            track_btn = self._find_track_progress_button()
             if not track_btn:
                 if not self._ensure_currently_reading():
                     logger.error("Could not move book to Currently Reading on StoryGraph")
@@ -391,27 +437,20 @@ class StorygraphSync:
                     for (var b of btns) { if (b.offsetParent !== null) { b.click(); return; } }
                     if (btns.length > 0) btns[0].click();
                 """)
-                try:
-                    WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "button.track-progress-button"))
-                    )
-                except TimeoutException:
-                    logger.error("track-progress-button never appeared after shelving")
+                time.sleep(1)
+                track_btn = self._find_track_progress_button()
+                if not track_btn:
+                    logger.error("Track progress button never appeared after shelving")
                     return False
 
-            # JS-click the track-progress-button to open the inline form
+            # JS-click the track progress button to open the inline form
             clicked = self.driver.execute_script("""
-                var btns = document.querySelectorAll('button.track-progress-button');
-                for (var b of btns) {
-                    if (b.offsetParent !== null) { b.scrollIntoView(true); b.click(); return 'visible'; }
-                }
-                if (btns.length > 0) { btns[0].scrollIntoView(true); btns[0].click(); return 'hidden'; }
-                return 'none';
-            """)
+                var btn = arguments[0];
+                btn.scrollIntoView(true);
+                btn.click();
+                return btn.offsetParent !== null ? 'visible' : 'hidden';
+            """, track_btn)
             logger.debug("track-progress-button click result: %s", clicked)
-            if clicked == 'none':
-                logger.error("track-progress-button not found on StoryGraph book page")
-                return False
             time.sleep(1)
 
             value_to_set = None
