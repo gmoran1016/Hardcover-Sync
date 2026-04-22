@@ -368,6 +368,7 @@ class StorygraphSync:
         """
         result = self.driver.execute_script("""
             var selectors = [
+                'button.edit-progress',
                 'button.track-progress-button',
                 'button.edit-progress-button',
             ];
@@ -379,15 +380,15 @@ class StorygraphSync:
             var all = document.querySelectorAll('button');
             for (var b of all) {
                 var t = b.textContent.toLowerCase().trim();
+                if (t.includes('edit') && t.includes('progress')) return b;
                 if (t.includes('track') && t.includes('progress')) return b;
                 if (t === 'update progress' || t === 'log progress') return b;
             }
-            // Diagnostic: log all button classes present
-            var classes = Array.from(document.querySelectorAll('button[class]'))
-                .map(function(b){ return b.className; })
-                .filter(function(c, i, a){ return a.indexOf(c) === i; })
-                .join(' | ');
-            console.log('[hardcover-sync] buttons on page: ' + classes);
+            // Diagnostic: log unique button classes for debugging
+            var classes = Array.from(new Set(
+                Array.from(document.querySelectorAll('button[class]')).map(function(b){ return b.className; })
+            )).join(' | ');
+            console.log('[hardcover-sync] no progress button found. button classes: ' + classes);
             return null;
         """)
         if result is None:

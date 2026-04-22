@@ -447,6 +447,10 @@ class GoodreadsSync:
         try:
             wait = WebDriverWait(self.driver, 15)
 
+            # Both pages and percent modes use the same input element:
+            # class="gr-textInput updateReadingProgress__headerInput"
+            # In pages mode the placeholder is "p. NNN"; in percent mode it's
+            # just a number. We locate by class, which works for both.
             if pages is not None:
                 # Ensure we're in pages mode (the # button)
                 try:
@@ -459,14 +463,13 @@ class GoodreadsSync:
                 except NoSuchElementException:
                     pass
 
-                # The page input has placeholder "p. NNN"
-                page_input = wait.until(
+                progress_input = wait.until(
                     EC.presence_of_element_located((
-                        By.XPATH, '//input[starts-with(@placeholder,"p.")]'
+                        By.CSS_SELECTOR, 'input.updateReadingProgress__headerInput'
                     ))
                 )
-                page_input.clear()
-                page_input.send_keys(str(pages))
+                progress_input.clear()
+                progress_input.send_keys(str(pages))
 
             elif pct is not None:
                 # Switch to percent mode
@@ -480,27 +483,24 @@ class GoodreadsSync:
                 except NoSuchElementException:
                     pass
 
-                pct_input = wait.until(
+                progress_input = wait.until(
                     EC.presence_of_element_located((
-                        By.XPATH, '//input[starts-with(@placeholder,"%")]'
+                        By.CSS_SELECTOR, 'input.updateReadingProgress__headerInput'
                     ))
                 )
-                pct_input.clear()
-                pct_input.send_keys(str(int(pct)))
+                progress_input.clear()
+                progress_input.send_keys(str(int(pct)))
 
             else:
                 logger.error("No pages or percent to submit")
                 return False
 
-            # Submit button is inside the progress form; scope to a form/dialog
-            # ancestor to avoid matching the widget's "Update progress" buttons.
+            # The submit button has a unique class that distinguishes it from
+            # the widget "Update progress" buttons. No form element wraps it —
+            # the container is div.longTextPopupForm.
             submit = wait.until(
                 EC.element_to_be_clickable((
-                    By.XPATH,
-                    '//form[.//input[starts-with(@placeholder,"p.")] or .//input[starts-with(@placeholder,"%")]]'
-                    '//button[normalize-space(.)="Update progress"]'
-                    ' | //div[contains(@class,"modal") or contains(@class,"dialog") or contains(@class,"popup")]'
-                    '//button[normalize-space(.)="Update progress"]',
+                    By.CSS_SELECTOR, 'button.longTextPopupForm__submitButton'
                 ))
             )
             submit.click()

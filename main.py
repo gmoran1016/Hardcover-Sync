@@ -10,7 +10,7 @@ import os
 import signal
 import time
 
-VERSION = "1.2.5"
+VERSION = "1.2.6"
 
 from dotenv import load_dotenv
 
