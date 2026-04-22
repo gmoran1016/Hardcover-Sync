@@ -281,7 +281,7 @@ class GoodreadsSync:
             try:
                 self.driver.find_element(
                     By.CSS_SELECTOR,
-                    'a[href*="/user/show"], a[href*="/review/list"], nav',
+                    'a[href*="/user/show"], a[href*="/review/list"]',
                 )
                 return True
             except NoSuchElementException:
@@ -492,11 +492,15 @@ class GoodreadsSync:
                 logger.error("No pages or percent to submit")
                 return False
 
-            # The submit button is also labelled "Update progress"
-            # After the form opens there should be exactly one visible
+            # Submit button is inside the progress form; scope to a form/dialog
+            # ancestor to avoid matching the widget's "Update progress" buttons.
             submit = wait.until(
                 EC.element_to_be_clickable((
-                    By.XPATH, '//button[normalize-space(.)="Update progress"]'
+                    By.XPATH,
+                    '//form[.//input[starts-with(@placeholder,"p.")] or .//input[starts-with(@placeholder,"%")]]'
+                    '//button[normalize-space(.)="Update progress"]'
+                    ' | //div[contains(@class,"modal") or contains(@class,"dialog") or contains(@class,"popup")]'
+                    '//button[normalize-space(.)="Update progress"]',
                 ))
             )
             submit.click()

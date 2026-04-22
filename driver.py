@@ -41,10 +41,9 @@ def create_driver() -> webdriver.Chrome:
     options.add_argument("--media-cache-size=1")
     options.add_argument("--disable-application-cache")
     options.add_argument("--aggressive-cache-discard")
-    options.add_experimental_option("excludeSwitches", ["enable-logging"])
     # Reduce bot-detection signals
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("excludeSwitches", ["enable-logging", "enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     options.add_argument(
         "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
