@@ -19,7 +19,7 @@ query GetCurrentlyReading {
           }
         }
       }
-      user_book_reads(order_by: {started_at: desc_nulls_last}, limit: 1) {
+      user_book_reads(order_by: {id: desc}, limit: 1) {
         progress
         progress_pages
         edition {
