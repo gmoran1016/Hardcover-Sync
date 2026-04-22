@@ -320,20 +320,25 @@ class StorygraphSync:
             except TimeoutException:
                 logger.warning("StoryGraph expand-dropdown-button not found within 8s")
 
-            # JS-click the 'currently reading' button regardless of visibility
+            # JS-click the 'currently reading' button regardless of visibility.
+            # Try the full phrase first, then fall back to just "reading" in case
+            # StoryGraph shortens the label in some UI versions.
             result = self.driver.execute_script("""
                 var btns = document.querySelectorAll('button.read-status-button');
+                var texts = [];
                 for (var b of btns) {
-                    if (b.textContent.toLowerCase().includes('currently reading')) {
+                    var t = b.textContent.toLowerCase().trim();
+                    texts.push(t);
+                    if (t.includes('currently reading') || t === 'reading') {
                         b.click();
-                        return 'clicked';
+                        return 'clicked:' + t;
                     }
                 }
-                return 'not found (' + btns.length + ' read-status-buttons in DOM)';
+                return 'not found | texts: [' + texts.join(' | ') + ']';
             """)
             logger.debug("StoryGraph read-status-button JS result: %s", result)
 
-            if "clicked" not in result:
+            if not result.startswith("clicked"):
                 logger.warning("'Currently reading' shelf button not found on StoryGraph page: %s", result)
                 return False
 
