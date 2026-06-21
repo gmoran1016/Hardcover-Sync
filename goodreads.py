@@ -27,7 +27,6 @@ Flow for each book:
 import json
 import logging
 import os
-import re
 import time
 from urllib.parse import quote_plus
 
@@ -40,6 +39,8 @@ from selenium.common.exceptions import (
 )
 
 from driver import create_driver
+from matching import choose_match, normalise
+from sync_result import SyncResult
 
 logger = logging.getLogger(__name__)
 GOODREADS_URL = "https://www.goodreads.com"
@@ -78,6 +79,9 @@ class GoodreadsSync:
                 "Saved cookies are expired or invalid. "
                 "Re-run 'python setup_cookies.py' to refresh them."
             )
+            if self.email and self.password:
+                logger.info("Trying Goodreads form login as a fallback")
+                return self._login_with_form()
             return False
 
         logger.warning(
@@ -88,7 +92,7 @@ class GoodreadsSync:
         )
         return self._login_with_form()
 
-    def mark_finished(self, book: dict) -> bool:
+    def mark_finished(self, book: dict, book_url: str | None = None) -> SyncResult:
         """Mark a book as finished on Goodreads via the 'I'm finished!' button."""
         title = book["title"]
         logger.info("Marking Goodreads as finished: '%s'", title)
@@ -98,7 +102,7 @@ class GoodreadsSync:
 
             if not self._click_update_progress_for(title):
                 logger.warning("'%s' not in Currently Reading widget; can't mark finished", title)
-                return False
+                return SyncResult.failed("book is not visible in the Currently Reading widget")
 
             time.sleep(1)
             wait = WebDriverWait(self.driver, 8)
@@ -109,18 +113,18 @@ class GoodreadsSync:
                 ))
             )
             finished_btn.click()
-            time.sleep(2)
+            WebDriverWait(self.driver, 10).until(EC.staleness_of(finished_btn))
             logger.info("Goodreads: marked '%s' as finished", title)
-            return True
+            return SyncResult.ok(book_url)
 
         except TimeoutException:
             logger.error("Timed out finding 'I'm finished!' button for '%s'", title)
-            return False
+            return SyncResult.failed("finished button timed out", target_url=book_url)
         except Exception as exc:
             logger.error("Error marking '%s' as finished on Goodreads: %s", title, exc)
-            return False
+            return SyncResult.failed(str(exc), target_url=book_url)
 
-    def update_progress(self, book: dict) -> bool:
+    def update_progress(self, book: dict, book_url: str | None = None) -> SyncResult:
         title = book["title"]
         pages = book.get("progress_pages")
         pct = book.get("progress_percent")
@@ -141,7 +145,7 @@ class GoodreadsSync:
             if not self._click_update_progress_for(title):
                 # Book isn't in Currently Reading widget — add it first via the book page
                 logger.info("Book not in Currently Reading widget; adding it to the shelf…")
-                book_url = self._search_book(title, book.get("author"))
+                book_url = book_url or self._search_book(title, book.get("author"))
                 if book_url:
                     self.driver.get(book_url)
                     time.sleep(5)
@@ -152,7 +156,10 @@ class GoodreadsSync:
                             "check DEBUG logs for shelf button details",
                             title,
                         )
-                        return False
+                        return SyncResult.failed(
+                            "could not move book to Currently Reading",
+                            target_url=book_url,
+                        )
                     # Give Goodreads time to propagate the shelf change to the home widget
                     time.sleep(4)
                     self.driver.get(GOODREADS_URL)
@@ -164,14 +171,23 @@ class GoodreadsSync:
                             "try running sync again in a few minutes",
                             title,
                         )
-                        return False
+                        return SyncResult.failed(
+                            "progress widget did not appear after shelving",
+                            target_url=book_url,
+                        )
+                else:
+                    return SyncResult.failed("no unambiguous Goodreads search result")
 
             time.sleep(1)
-            return self._fill_home_page_progress_form(pages, pct)
+            result = self._fill_home_page_progress_form(pages, pct)
+            return SyncResult.ok(book_url) if result else SyncResult.failed(
+                "progress form could not be saved",
+                target_url=book_url,
+            )
 
         except Exception as exc:
             logger.error("Error updating '%s' on Goodreads: %s", title, exc)
-            return False
+            return SyncResult.failed(str(exc), target_url=book_url)
 
     # ------------------------------------------------------------------
     # Login helpers
@@ -307,21 +323,20 @@ class GoodreadsSync:
                 ))
             )
 
-            title_norm = _normalise(title)
+            candidates = []
             for link in links[:5]:
-                text_norm = _normalise(link.text)
-                if title_norm in text_norm or text_norm in title_norm:
-                    href = link.get_attribute("href")
-                    logger.debug("Matched Goodreads result: %s → %s", link.text.strip(), href)
-                    return href
-
-            if links:
-                href = links[0].get_attribute("href")
-                logger.warning(
-                    "No exact Goodreads match for '%s'; using first result: %s",
-                    title, links[0].text.strip(),
-                )
-                return href
+                text = link.text
+                try:
+                    row = link.find_element(By.XPATH, "./ancestor::tr[1]")
+                    text = row.text or text
+                except NoSuchElementException:
+                    pass
+                candidates.append((text, link.get_attribute("href")))
+            match = choose_match(title, author, candidates)
+            if match:
+                logger.debug("Matched Goodreads result for '%s': %s", title, match)
+                return match
+            logger.warning("No unambiguous Goodreads match for '%s'", title)
 
         except TimeoutException:
             logger.error("Timeout searching Goodreads for '%s'", title)
@@ -396,7 +411,7 @@ class GoodreadsSync:
 
     def _click_update_progress_for(self, title: str) -> bool:
         """Find and click 'Update progress' for the given book in the Currently Reading widget."""
-        title_norm = _normalise(title)
+        title_norm = normalise(title)
 
         try:
             wait = WebDriverWait(self.driver, 5)
@@ -415,31 +430,25 @@ class GoodreadsSync:
             time.sleep(0.3)
             self.driver.execute_script("arguments[0].click();", el)
 
-        if len(btns) == 1:
-            js_click(btns[0])
-            logger.debug("Clicked Update progress (only one button)")
-            return True
-
-        # Multiple books — find the one whose container mentions this title
+        # Always associate the mutation button with the requested title.
         for btn in btns:
             try:
                 container = btn.find_element(
                     By.XPATH,
                     "./ancestor::div[.//a[contains(@href,'/book/show/')]][1]",
                 )
-                if title_norm[:15] in _normalise(container.text):
+                container_norm = normalise(container.text)
+                if title_norm and (
+                    title_norm in container_norm
+                    or container_norm.startswith(title_norm)
+                ):
                     js_click(btn)
                     logger.debug("Clicked Update progress for '%s'", title)
                     return True
             except NoSuchElementException:
                 continue
 
-        # Fallback: first button
-        if btns:
-            js_click(btns[0])
-            logger.warning("Could not match book; clicking first 'Update progress' button")
-            return True
-
+        logger.warning("Could not safely associate an Update progress button with '%s'", title)
         return False
 
     def _fill_home_page_progress_form(self, pages: int | None, pct: float | None) -> bool:
@@ -504,7 +513,10 @@ class GoodreadsSync:
                 ))
             )
             submit.click()
-            time.sleep(1)
+            wait.until(EC.invisibility_of_element_located((
+                By.CSS_SELECTOR,
+                "button.longTextPopupForm__submitButton",
+            )))
 
             if pages is not None:
                 logger.info("Goodreads progress saved: %d pages", pages)
@@ -518,13 +530,3 @@ class GoodreadsSync:
         except Exception as exc:
             logger.error("Error filling Goodreads progress form: %s", exc)
             return False
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _normalise(text: str) -> str:
-    text = (text or "").lower()
-    text = re.sub(r"\s*\(.*?\)", "", text)
-    return text.strip()

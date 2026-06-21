@@ -1,0 +1,9 @@
+.git
+.github
+.claude
+.env
+cookies
+state
+__pycache__
+*.pyc
+tests
