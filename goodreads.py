@@ -228,25 +228,25 @@ class GoodreadsSync:
         # Use a fresh navigation rather than refresh. Goodreads' WAF can return
         # an empty 202 response when a newly cookie-seeded session is refreshed.
         self.driver.get(GOODREADS_URL)
-        try:
-            WebDriverWait(self.driver, 15).until(
-                lambda driver: len(driver.page_source) > 1000
-            )
-        except TimeoutException:
-            logger.error(
-                "Goodreads returned an empty page after loading cookies. "
-                "This usually indicates headless-browser filtering, not expired cookies."
-            )
-            return False
-
-        if self._is_logged_in():
-            logger.info("Goodreads authenticated via saved cookies")
-            return True
+        for elapsed in range(0, 61, 5):
+            if self._is_logged_in():
+                logger.info("Goodreads authenticated via saved cookies")
+                return True
+            if elapsed:
+                logger.info(
+                    "Waiting for Goodreads authentication challenge… %d seconds "
+                    "(title: %r)",
+                    elapsed,
+                    self.driver.title,
+                )
+            time.sleep(5)
 
         logger.warning(
-            "Goodreads cookie authentication was rejected (URL: %s, title: %r)",
+            "Goodreads cookie authentication was rejected after 60 seconds "
+            "(URL: %s, title: %r, page bytes: %d)",
             self.driver.current_url,
             self.driver.title,
+            len(self.driver.page_source),
         )
         return False
 
