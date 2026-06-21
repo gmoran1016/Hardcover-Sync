@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import signal
+import sys
 import time
 
 from config import Config, ConfigError, load_config
@@ -14,12 +16,14 @@ from storygraph import COOKIES_FILE as STORYGRAPH_COOKIES, StorygraphSync
 from sync_result import SyncResult
 from sync_state import StateError, load_state, progress_signature, save_state
 
-VERSION = "2.0.2"
+VERSION = "2.0.3"
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stdout,
+    force=True,
 )
 logger = logging.getLogger(__name__)
 
@@ -173,7 +177,58 @@ def run_sync(config: Config) -> None:
     )
 
 
-def main() -> None:
+def run_auth_diagnostics(config: Config) -> bool:
+    """Test configured destination logins without modifying reading progress."""
+    logger.info("Running authentication diagnostics (no progress will be changed)")
+    checks = [
+        (
+            "Goodreads",
+            _enabled(GOODREADS_COOKIES, config.goodreads_email, config.goodreads_password),
+            lambda: GoodreadsSync(config.goodreads_email, config.goodreads_password),
+        ),
+        (
+            "StoryGraph",
+            _enabled(STORYGRAPH_COOKIES, config.storygraph_email, config.storygraph_password),
+            lambda: StorygraphSync(config.storygraph_email, config.storygraph_password),
+        ),
+    ]
+    success = True
+    for name, enabled, factory in checks:
+        if not enabled:
+            logger.info("%s is not configured — skipped", name)
+            continue
+        try:
+            with factory() as adapter:
+                if adapter.login():
+                    logger.info("%s authentication diagnostic: PASS", name)
+                else:
+                    logger.error("%s authentication diagnostic: FAIL", name)
+                    success = False
+        except Exception as exc:
+            logger.exception("%s authentication diagnostic crashed: %s", name, exc)
+            success = False
+    logger.info("Authentication diagnostics complete: %s", "PASS" if success else "FAIL")
+    return success
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Sync Hardcover progress")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--once",
+        action="store_true",
+        help="run one complete sync and exit instead of waiting for the next interval",
+    )
+    mode.add_argument(
+        "--diagnose-auth",
+        action="store_true",
+        help="test destination cookie/login authentication without changing progress",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
     try:
         config = load_config()
     except ConfigError as exc:
@@ -182,6 +237,14 @@ def main() -> None:
 
     interval_minutes = config.sync_interval_seconds // 60
     logger.info("Hardcover Sync v%s starting (interval: %d min)", VERSION, interval_minutes)
+
+    if args.diagnose_auth:
+        raise SystemExit(0 if run_auth_diagnostics(config) else 1)
+    if args.once:
+        run_sync(config)
+        logger.info("One-shot sync complete")
+        return
+
     running = True
 
     def _stop(_sig, _frame):

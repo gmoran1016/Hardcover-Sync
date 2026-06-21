@@ -161,6 +161,21 @@ python setup_cookies.py
 python main.py
 ```
 
+Run one sync locally and exit:
+
+```bash
+python main.py --once
+```
+
+Test Goodreads and StoryGraph authentication without changing progress:
+
+```bash
+python main.py --diagnose-auth
+```
+
+Application logs are written to standard output so they appear consistently in
+terminals and Docker log collectors.
+
 ---
 
 ## Project structure

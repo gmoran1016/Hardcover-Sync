@@ -13,6 +13,7 @@ env/
 # Logs
 *.log
 logs/
+state/
 
 # Debug screenshots
 debug_*.png
