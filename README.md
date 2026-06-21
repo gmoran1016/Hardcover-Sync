@@ -185,6 +185,12 @@ docker-compose.yml
 ### Cookies expired / login fails
 Re-run `python setup_cookies.py` on a machine with a display and re-copy the `cookies/` folder to your server.
 
+Cookie files created before v2.0.2 do not include the browser identity required
+by Goodreads' current WAF checks. After upgrading to v2.0.2, run
+`python setup_cookies.py` once more and replace `cookies/goodreads.json`.
+The Docker image runs Chromium under a virtual display and replays that captured
+identity rather than using Chrome's detectable headless mode.
+
 ### Book not found
 The matcher requires a confident title/author result. Ambiguous results are
 deliberately skipped and retried later rather than defaulting to the first

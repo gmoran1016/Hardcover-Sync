@@ -21,6 +21,8 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 
+from cookie_bundle import encode_cookie_bundle
+
 COOKIES_DIR = os.path.join(os.path.dirname(__file__), "cookies")
 os.makedirs(COOKIES_DIR, exist_ok=True)
 
@@ -45,10 +47,20 @@ def create_visible_driver() -> webdriver.Chrome:
 def save_cookies(driver: webdriver.Chrome, filename: str) -> None:
     path = os.path.join(COOKIES_DIR, filename)
     cookies = driver.get_cookies()
+    user_agent = driver.execute_script("return navigator.userAgent")
+    user_agent_metadata = driver.execute_async_script("""
+        var done = arguments[arguments.length - 1];
+        if (!navigator.userAgentData) { done(null); return; }
+        navigator.userAgentData.getHighEntropyValues([
+            'architecture', 'bitness', 'model', 'platformVersion',
+            'uaFullVersion', 'fullVersionList', 'wow64'
+        ]).then(done).catch(function(){ done(navigator.userAgentData.toJSON()); });
+    """)
+    bundle = encode_cookie_bundle(cookies, user_agent, user_agent_metadata)
     fd, temp_path = tempfile.mkstemp(prefix=".cookies.", dir=COOKIES_DIR)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(cookies, f, indent=2)
+            json.dump(bundle, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
         try:
@@ -59,7 +71,7 @@ def save_cookies(driver: webdriver.Chrome, filename: str) -> None:
     finally:
         if os.path.exists(temp_path):
             os.unlink(temp_path)
-    print(f"  Saved {len(cookies)} cookies → {path}")
+    print(f"  Saved {len(cookies)} cookies and browser identity → {path}")
 
 
 def setup_goodreads(driver: webdriver.Chrome) -> None:
