@@ -14,6 +14,11 @@ os.environ.setdefault("SE_AVOID_STATS", "true")
 logger = logging.getLogger(__name__)
 
 
+def browser_user_agent(user_agent: str) -> str:
+    """Return the installed browser's normal UA without the headless marker."""
+    return user_agent.replace("HeadlessChrome/", "Chrome/")
+
+
 def create_driver() -> webdriver.Chrome:
     """Return a headless Chrome WebDriver.
 
@@ -64,7 +69,18 @@ def create_driver() -> webdriver.Chrome:
             service=Service(log_output=log_sink), options=options
         )
 
-    # Mask the navigator.webdriver property to reduce bot-detection
+    # Goodreads currently serves an empty document to the default
+    # HeadlessChrome user agent. Derive a normal UA from the installed browser
+    # so the version remains accurate instead of hard-coding one.
+    version = driver.execute_cdp_cmd("Browser.getVersion", {})
+    user_agent = browser_user_agent(version.get("userAgent", ""))
+    if user_agent:
+        driver.execute_cdp_cmd(
+            "Network.setUserAgentOverride",
+            {"userAgent": user_agent},
+        )
+
+    # Mask the navigator.webdriver property to reduce bot-detection.
     driver.execute_cdp_cmd(
         "Page.addScriptToEvaluateOnNewDocument",
         {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"},
