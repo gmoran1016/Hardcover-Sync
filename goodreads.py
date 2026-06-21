@@ -214,7 +214,16 @@ class GoodreadsSync:
                 logger.debug("Skipped cookie '%s': %s", cookie.get("name"), exc)
 
         self.driver.refresh()
-        time.sleep(2)
+        try:
+            WebDriverWait(self.driver, 15).until(
+                lambda driver: len(driver.page_source) > 1000
+            )
+        except TimeoutException:
+            logger.error(
+                "Goodreads returned an empty page after loading cookies. "
+                "This usually indicates headless-browser filtering, not expired cookies."
+            )
+            return False
 
         if self._is_logged_in():
             logger.info("Goodreads authenticated via saved cookies")
