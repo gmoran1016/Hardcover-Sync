@@ -19,7 +19,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # ---- application code ----
 COPY main.py config.py hardcover.py goodreads.py storygraph.py driver.py \
-     cookie_bundle.py matching.py sync_result.py sync_state.py ./
+     cookie_bundle.py matching.py sync_result.py sync_state.py \
+     container_entrypoint.py ./
 
 # ---- non-root user ----
 RUN useradd -m -u 1000 appuser && chown -R appuser /app
@@ -31,6 +32,8 @@ ENV PYTHONUNBUFFERED=1 \
     CHROME_BIN=/usr/bin/chromium \
     CHROMEDRIVER_PATH=/usr/bin/chromedriver \
     CHROME_HEADLESS=0 \
-    CHROME_NO_SANDBOX=1
+    CHROME_NO_SANDBOX=1 \
+    DISPLAY=:99
 
-CMD ["xvfb-run", "-a", "python", "main.py"]
+ENTRYPOINT ["python", "-u", "container_entrypoint.py"]
+CMD ["python", "-u", "main.py"]

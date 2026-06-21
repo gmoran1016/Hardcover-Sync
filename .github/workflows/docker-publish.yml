@@ -18,6 +18,14 @@ jobs:
       - run: python -m py_compile *.py
       - run: python -m unittest discover -v
       - run: docker build -t hardcover-sync:test .
+      - name: Verify container entrypoint logs
+        run: |
+          docker run --rm hardcover-sync:test python -u main.py --help \
+            > container.log 2>&1
+          cat container.log
+          grep -F "[hardcover-sync-entrypoint] container starting" container.log
+          grep -F "[hardcover-sync-entrypoint] virtual display is ready" container.log
+          grep -F "usage:" container.log
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
