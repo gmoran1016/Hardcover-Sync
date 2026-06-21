@@ -144,6 +144,18 @@ Add these **Volume mappings**:
 
 **5. View logs:** Docker tab → click the container icon → Logs.
 
+The first lines should appear immediately, before any network requests:
+
+```text
+[hardcover-sync-entrypoint] container starting
+[hardcover-sync-entrypoint] virtual display is ready
+Hardcover Sync v2.0.4 starting
+```
+
+If those entrypoint lines do not appear, Unraid is running an old image or has
+a custom command/entrypoint override. Force-update the image, then edit the
+container and clear any value in **Post Arguments** or custom entrypoint fields.
+
 ### Updating
 
 In the Unraid Docker tab, click the container icon → **Update** (or force re-pull with `docker pull ghcr.io/gmoran1016/hardcover-sync:latest` via SSH).
