@@ -32,8 +32,7 @@ def create_driver() -> webdriver.Chrome:
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-extensions")
     options.add_argument("--log-level=3")          # Silence Chrome's stderr noise
-    # Reduce memory footprint to prevent OOM crashes in Docker
-    options.add_argument("--single-process")
+    # Keep Chrome's normal multi-process model; single-process is crash-prone.
     options.add_argument("--disable-setuid-sandbox")
     options.add_argument("--memory-pressure-off")
     options.add_argument("--max_old_space_size=512")
@@ -45,10 +44,6 @@ def create_driver() -> webdriver.Chrome:
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-logging", "enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    options.add_argument(
-        "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    )
 
     chrome_bin = os.getenv("CHROME_BIN")
     if chrome_bin and os.path.exists(chrome_bin):

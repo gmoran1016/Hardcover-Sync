@@ -1,6 +1,6 @@
 # Hardcover Sync
 
-Automatically syncs your reading progress from [Hardcover](https://hardcover.app) to **Goodreads** (required) and **StoryGraph** (optional) on a configurable schedule.
+Automatically syncs your reading progress from [Hardcover](https://hardcover.app) to **Goodreads** and **StoryGraph** on a configurable schedule.
 
 Hardcover is always the source of truth — progress is never written back.
 
@@ -9,7 +9,9 @@ Hardcover is always the source of truth — progress is never written back.
 ## How it works
 
 1. Every N minutes the app queries the Hardcover GraphQL API for your **Currently Reading** books and their page progress.
-2. For each book it opens a headless Chrome session, logs in to Goodreads (and optionally StoryGraph), and updates the progress.
+2. It compares that data with durable per-destination state, retaining failed updates for retry.
+3. For each changed book it opens a headless Chrome session, logs in to each configured destination, and updates the progress.
+4. Ambiguous search results are skipped instead of risking an update to the wrong book.
 
 > Goodreads and StoryGraph have no public API, so browser automation is the only available method.
 
@@ -56,11 +58,14 @@ Edit `.env` and fill in your credentials:
 | Variable | Required | Description |
 |---|---|---|
 | `HARDCOVER_API_KEY` | Yes | From [hardcover.app/settings](https://hardcover.app/account) → API |
-| `GOODREADS_EMAIL` | Yes | Your Goodreads login email |
-| `GOODREADS_PASSWORD` | Yes | Your Goodreads password |
+| `GOODREADS_EMAIL` | No | Goodreads login email; only needed for form-login fallback |
+| `GOODREADS_PASSWORD` | No | Goodreads password; only needed for form-login fallback |
 | `STORYGRAPH_EMAIL` | No | Your StoryGraph login email |
 | `STORYGRAPH_PASSWORD` | No | Your StoryGraph password |
 | `SYNC_INTERVAL_MINUTES` | No | How often to sync (default: `30`) |
+
+A destination is enabled when its cookie file exists or both of its credential
+variables are configured. Cookie-only operation is recommended.
 
 ### 3. Run setup_cookies.py (if you haven't already)
 
@@ -113,7 +118,7 @@ scp cookies/storygraph.json root@UNRAID_IP:/mnt/user/appdata/hardcover-sync/cook
 | Name | `hardcover-sync` |
 | Repository | `ghcr.io/gmoran1016/hardcover-sync:latest` |
 | Network type | `bridge` |
-| Extra Parameters | `--shm-size=256m --cap-add=SYS_ADMIN --restart=unless-stopped` |
+| Extra Parameters | `--shm-size=256m --restart=unless-stopped` |
 
 Add these **Environment Variables** (click "+ Add another Path, Port, Variable, Label or Device"):
 
@@ -181,15 +186,26 @@ docker-compose.yml
 Re-run `python setup_cookies.py` on a machine with a display and re-copy the `cookies/` folder to your server.
 
 ### Book not found
-The book title on Hardcover must be close enough to the title on Goodreads/StoryGraph for the search to match. Very long subtitles or different editions can cause mismatches.
+The matcher requires a confident title/author result. Ambiguous results are
+deliberately skipped and retried later rather than defaulting to the first
+search result. Confirmed destination URLs are persisted in the state volume.
 
 ### Docker: Chrome crashes
-Two things are required:
-- `shm_size: "256mb"` in your compose file (or `--shm-size=256m` in Unraid). Chrome needs more shared memory than Docker's 64 MB default.
-- `cap_add: SYS_ADMIN` (or `--cap-add=SYS_ADMIN` in Unraid). Chrome needs this capability as an alternative to `--no-sandbox` for its process isolation.
+Keep `shm_size: "256mb"` in your compose file (or `--shm-size=256m` in
+Unraid). Chrome needs more shared memory than Docker's 64 MB default. The
+container does not require `SYS_ADMIN`; remove that capability when upgrading.
 
 ### Percentages differ between platforms
 Different platforms may have your book in a different edition with a different page count. This is expected — the sync pushes the absolute page number, and each platform calculates its own percentage.
 
 ### "Could not save sync state: Permission denied"
 The `/app/state` directory isn't writable. If using Docker Compose, make sure the `sync-state` named volume is defined (see `docker-compose.yml`). If using Unraid's Docker UI, add a path mapping for `/app/state` → `/mnt/user/appdata/hardcover-sync/state` and create that folder first with `mkdir -p /mnt/user/appdata/hardcover-sync/state`.
+
+### Reliability behavior
+
+- Hardcover network, authentication, GraphQL, and malformed-response failures
+  never replace the previous state with an empty library.
+- Goodreads and StoryGraph track success independently, so a failed destination
+  is retried even when Hardcover progress has not changed.
+- Finished books remain queued until configured destinations acknowledge them.
+- State writes are atomic and retain a `.bak` copy of the previous state.

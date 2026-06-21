@@ -16,7 +16,6 @@ Flow for each book:
 import json
 import logging
 import os
-import re
 import time
 from urllib.parse import quote_plus
 
@@ -26,6 +25,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
 from driver import create_driver
+from matching import choose_match
+from sync_result import SyncResult
 
 logger = logging.getLogger(__name__)
 STORYGRAPH_URL = "https://app.thestorygraph.com"
@@ -86,10 +87,19 @@ class StorygraphSync:
         self.driver.refresh()
         time.sleep(2)
 
-        if "sign_in" not in self.driver.current_url and STORYGRAPH_URL in self.driver.current_url:
+        if self._is_logged_in():
             logger.info("StoryGraph authenticated via saved cookies")
             return True
         return False
+
+    def _is_logged_in(self) -> bool:
+        if "sign_in" in self.driver.current_url:
+            return False
+        selectors = (
+            'a[href*="/profile/"], a[href*="/users/"][href*="/edit"], '
+            'form[action*="/users/sign_out"], button[aria-label*="account" i]'
+        )
+        return bool(self.driver.find_elements(By.CSS_SELECTOR, selectors))
 
     def _login_with_form(self) -> bool:
         logger.info("Logging in to StoryGraph via form…")
@@ -127,7 +137,7 @@ class StorygraphSync:
                 lambda d: "sign_in" not in d.current_url
             )
 
-            if STORYGRAPH_URL in self.driver.current_url:
+            if self._is_logged_in():
                 logger.info("StoryGraph form login successful")
                 return True
 
@@ -141,15 +151,15 @@ class StorygraphSync:
             logger.error("StoryGraph login error: %s", exc)
             return False
 
-    def mark_finished(self, book: dict) -> bool:
+    def mark_finished(self, book: dict, book_url: str | None = None) -> SyncResult:
         """Mark a book as finished on StoryGraph via the 'mark as finished' button."""
         title = book["title"]
         logger.info("Marking StoryGraph as finished: '%s'", title)
         try:
-            book_url = self._search_book(title)
+            book_url = book_url or self._search_book(title, book.get("author"))
             if not book_url:
                 logger.warning("Could not find '%s' on StoryGraph to mark finished", title)
-                return False
+                return SyncResult.failed("no unambiguous StoryGraph search result")
 
             self.driver.get(book_url)
             time.sleep(2)
@@ -180,20 +190,20 @@ class StorygraphSync:
             finished_btn = next((b for b in all_finished if b.is_displayed()), None)
             if finished_btn is None:
                 logger.error("mark-as-finished button not visible for '%s'", title)
-                return False
+                return SyncResult.failed("finish button was not visible", target_url=book_url)
             self.driver.execute_script("arguments[0].click();", finished_btn)
-            time.sleep(2)
+            WebDriverWait(self.driver, 10).until(EC.staleness_of(finished_btn))
             logger.info("StoryGraph: marked '%s' as finished", title)
-            return True
+            return SyncResult.ok(book_url)
 
         except TimeoutException:
             logger.error("Timed out finding 'mark as finished' button for '%s'", title)
-            return False
+            return SyncResult.failed("finish button timed out", target_url=book_url)
         except Exception as exc:
             logger.error("Error marking '%s' as finished on StoryGraph: %s", title, exc)
-            return False
+            return SyncResult.failed(str(exc), target_url=book_url)
 
-    def update_progress(self, book: dict) -> bool:
+    def update_progress(self, book: dict, book_url: str | None = None) -> SyncResult:
         title = book["title"]
         pages = book.get("progress_pages")
         pct = book.get("progress_percent")
@@ -207,25 +217,27 @@ class StorygraphSync:
         )
 
         try:
-            book_url = self._search_book(title)
+            book_url = book_url or self._search_book(title, book.get("author"))
             if not book_url:
                 logger.warning("Could not find '%s' on StoryGraph", title)
-                return False
+                return SyncResult.failed("no unambiguous StoryGraph search result")
 
             self.driver.get(book_url)
             time.sleep(4)
 
-            return self._do_update_progress(pages, pct, total)
+            if self._do_update_progress(pages, pct, total):
+                return SyncResult.ok(book_url)
+            return SyncResult.failed("progress form could not be saved", target_url=book_url)
 
         except Exception as exc:
             logger.error("Error updating StoryGraph for '%s': %s", title, exc)
-            return False
+            return SyncResult.failed(str(exc), target_url=book_url)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _search_book(self, title: str) -> str | None:
+    def _search_book(self, title: str, author: str | None = None) -> str | None:
         search_url = f"{STORYGRAPH_URL}/browse?search_term={quote_plus(title)}"
         self.driver.get(search_url)
 
@@ -239,24 +251,16 @@ class StorygraphSync:
                 ))
             )
 
-            title_norm = _normalise(title)
+            candidates = []
             for result in results[:5]:
-                text_norm = _normalise(result.text)
-                if title_norm in text_norm or text_norm in title_norm:
-                    href = self._extract_href(result)
-                    if href:
-                        logger.debug("Matched StoryGraph result: %s", result.text.strip())
-                        return href
-
-            # Fall back to first result
-            if results:
-                href = self._extract_href(results[0])
+                href = self._extract_href(result)
                 if href:
-                    logger.warning(
-                        "No exact StoryGraph match for '%s'; using first result: %s",
-                        title, results[0].text.strip(),
-                    )
-                    return href
+                    candidates.append((result.text, href))
+            match = choose_match(title, author, candidates)
+            if match:
+                logger.debug("Matched StoryGraph result for '%s': %s", title, match)
+                return match
+            logger.warning("No unambiguous StoryGraph match for '%s'", title)
 
         except TimeoutException:
             logger.error("Timeout searching StoryGraph for '%s'", title)
@@ -336,10 +340,13 @@ class StorygraphSync:
                         return 'clicked:' + t;
                     }
                 }
-                if (btns.length > 0) {
-                    return 'already-reading | texts: [' + texts.join(' | ') + ']';
+                var expand = Array.from(document.querySelectorAll('.expand-dropdown-button'))
+                    .find(function(b){ return b.offsetParent !== null; });
+                var current = expand ? expand.textContent.toLowerCase().trim() : '';
+                if (current.includes('currently reading')) {
+                    return 'already-reading:' + current;
                 }
-                return 'not found | texts: [' + texts.join(' | ') + ']';
+                return 'not found | current: [' + current + '] | options: [' + texts.join(' | ') + ']';
             """)
             logger.debug("StoryGraph read-status-button JS result: %s", result)
 
@@ -507,7 +514,10 @@ class StorygraphSync:
             if save_result == 'none':
                 logger.error("Save button not found after filling progress")
                 return False
-            time.sleep(2)
+            wait.until(EC.invisibility_of_element_located((
+                By.CSS_SELECTOR,
+                "input#read_status_progress_number",
+            )))
 
             logger.info(
                 "StoryGraph progress saved: %s pages",
@@ -521,13 +531,3 @@ class StorygraphSync:
         except Exception as exc:
             logger.error("Error filling StoryGraph progress form: %s", exc)
             return False
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _normalise(text: str) -> str:
-    text = (text or "").lower()
-    text = re.sub(r"\s*\(.*?\)", "", text)
-    return text.strip()

@@ -15,7 +15,7 @@ In Docker, mount that folder as a volume so the container can read them:
 
 import json
 import os
-import time
+import tempfile
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -45,8 +45,20 @@ def create_visible_driver() -> webdriver.Chrome:
 def save_cookies(driver: webdriver.Chrome, filename: str) -> None:
     path = os.path.join(COOKIES_DIR, filename)
     cookies = driver.get_cookies()
-    with open(path, "w") as f:
-        json.dump(cookies, f, indent=2)
+    fd, temp_path = tempfile.mkstemp(prefix=".cookies.", dir=COOKIES_DIR)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(cookies, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(temp_path, 0o600)
+        except OSError:
+            pass
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
     print(f"  Saved {len(cookies)} cookies → {path}")
 
 

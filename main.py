@@ -1,26 +1,21 @@
-"""Hardcover Sync — main entry point.
+"""Hardcover Sync entry point and resilient synchronization orchestration."""
 
-Polls Hardcover every SYNC_INTERVAL_MINUTES minutes and pushes reading
-progress to Goodreads (required) and StoryGraph (optional).
-"""
+from __future__ import annotations
 
-import json
 import logging
 import os
 import signal
 import time
 
-VERSION = "1.2.6"
+from config import Config, ConfigError, load_config
+from goodreads import COOKIES_FILE as GOODREADS_COOKIES, GoodreadsSync
+from hardcover import HardcoverAPIError, get_book_statuses, get_currently_reading
+from storygraph import COOKIES_FILE as STORYGRAPH_COOKIES, StorygraphSync
+from sync_result import SyncResult
+from sync_state import StateError, load_state, progress_signature, save_state
 
-from dotenv import load_dotenv
+VERSION = "2.0.0"
 
-from hardcover import get_currently_reading, get_finished_books
-from goodreads import GoodreadsSync
-from storygraph import StorygraphSync
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -28,142 +23,168 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-load_dotenv()
 
-HARDCOVER_API_KEY = os.getenv("HARDCOVER_API_KEY", "")
-GOODREADS_EMAIL = os.getenv("GOODREADS_EMAIL", "")
-GOODREADS_PASSWORD = os.getenv("GOODREADS_PASSWORD", "")
-STORYGRAPH_EMAIL = os.getenv("STORYGRAPH_EMAIL", "")
-STORYGRAPH_PASSWORD = os.getenv("STORYGRAPH_PASSWORD", "")
-SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL_MINUTES", "30")) * 60
-
-# Stored in a dedicated named volume so appuser can always write to it
-STATE_FILE = os.path.join(os.path.dirname(__file__), "state", "sync_state.json")
+def _enabled(cookie_file: str, email: str, password: str) -> bool:
+    return os.path.exists(cookie_file) or bool(email and password)
 
 
-# ---------------------------------------------------------------------------
-# State helpers
-# ---------------------------------------------------------------------------
-
-def _load_state() -> dict:
-    try:
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {"reading_titles": [], "books": []}
+def _coerce_result(value, target_url: str | None = None) -> SyncResult:
+    if isinstance(value, SyncResult):
+        return value
+    return SyncResult.ok(target_url) if value else SyncResult.failed("operation failed")
 
 
-def _save_state(reading_titles: list[str], books: list[dict]) -> None:
-    try:
-        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-        with open(STATE_FILE, "w") as f:
-            json.dump({"reading_titles": reading_titles, "books": books}, f)
-    except OSError as exc:
-        logger.warning("Could not save sync state: %s", exc)
+def _sync_destination(
+    name: str,
+    adapter,
+    destination_state: dict,
+    current_books: dict[str, dict],
+    pending_finished: dict[str, dict],
+) -> tuple[int, int, int]:
+    succeeded = failed = skipped = 0
+    synced = destination_state["books"]
+    mappings = destination_state["mappings"]
 
-
-def _books_changed(prev_books: list[dict], curr_books: list[dict]) -> bool:
-    """Return True if the book list or any reading progress has changed."""
-    if len(prev_books) != len(curr_books):
-        return True
-    prev_map = {b["title"]: b for b in prev_books}
-    curr_map = {b["title"]: b for b in curr_books}
-    if set(prev_map) != set(curr_map):
-        return True
-    for title, curr in curr_map.items():
-        prev = prev_map[title]
-        if curr.get("progress_pages") != prev.get("progress_pages"):
-            return True
-        if curr.get("progress_percent") != prev.get("progress_percent"):
-            return True
-    return False
-
-
-# ---------------------------------------------------------------------------
-# Sync logic
-# ---------------------------------------------------------------------------
-
-def run_sync() -> None:
-    if not HARDCOVER_API_KEY:
-        logger.error("HARDCOVER_API_KEY is not set — nothing to do")
-        return
-
-    # 1. Fetch current reading list and compare with last sync to detect finished books
-    state = _load_state()
-    prev_titles = set(state.get("reading_titles", []))
-    prev_books = state.get("books", [])
-
-    books = get_currently_reading(HARDCOVER_API_KEY)
-    current_titles = {b["title"] for b in books}
-
-    # Titles that were reading last sync but are gone now — check if they're finished
-    missing = list(prev_titles - current_titles)
-    finished_books = get_finished_books(HARDCOVER_API_KEY, missing) if missing else []
-    if finished_books:
-        logger.info(
-            "Detected %d finished book(s): %s",
-            len(finished_books),
-            ", ".join(f"'{b['title']}'" for b in finished_books),
+    for book_id, book in current_books.items():
+        signature = progress_signature(book)
+        if synced.get(book_id) == signature:
+            skipped += 1
+            continue
+        result = _coerce_result(
+            adapter.update_progress(book, mappings.get(book_id)),
+            mappings.get(book_id),
         )
+        if result.success:
+            synced[book_id] = signature
+            if result.target_url:
+                mappings[book_id] = result.target_url
+            succeeded += 1
+        else:
+            failed += 1
+            logger.error("%s update failed for '%s': %s", name, book["title"], result.reason)
 
-    if not books and not finished_books:
-        logger.info("No currently-reading or newly-finished books found on Hardcover")
-        _save_state([], [])
-        return
-
-    if books:
-        logger.info("Found %d currently-reading book(s) on Hardcover", len(books))
-
-    # Skip pushing updates if nothing changed on Hardcover
-    if not finished_books and not _books_changed(prev_books, books):
-        logger.info("No changes detected on Hardcover — skipping sync")
-        return
-
-    # 2. Push to Goodreads (required)
-    if GOODREADS_EMAIL and GOODREADS_PASSWORD:
-        with GoodreadsSync(GOODREADS_EMAIL, GOODREADS_PASSWORD) as gr:
-            if gr.login():
-                for book in books:
-                    gr.update_progress(book)
-                for book in finished_books:
-                    gr.mark_finished(book)
-            else:
-                logger.error("Goodreads login failed — skipping Goodreads sync")
-    else:
-        logger.warning(
-            "GOODREADS_EMAIL / GOODREADS_PASSWORD not set — skipping Goodreads sync"
+    for book_id, book in pending_finished.items():
+        if synced.get(book_id) == "finished":
+            skipped += 1
+            continue
+        result = _coerce_result(
+            adapter.mark_finished(book, mappings.get(book_id)),
+            mappings.get(book_id),
         )
+        if result.success:
+            synced[book_id] = "finished"
+            if result.target_url:
+                mappings[book_id] = result.target_url
+            succeeded += 1
+        else:
+            failed += 1
+            logger.error("%s finish failed for '%s': %s", name, book["title"], result.reason)
 
-    # 3. Push to StoryGraph (optional)
-    if STORYGRAPH_EMAIL and STORYGRAPH_PASSWORD:
-        with StorygraphSync(STORYGRAPH_EMAIL, STORYGRAPH_PASSWORD) as sg:
-            if sg.login():
-                for book in books:
-                    sg.update_progress(book)
-                for book in finished_books:
-                    sg.mark_finished(book)
-            else:
-                logger.error("StoryGraph login failed — skipping StoryGraph sync")
-    else:
-        logger.info("StoryGraph credentials not set — skipping StoryGraph sync")
-
-    # 4. Save state for next sync
-    _save_state(list(current_titles), books)
+    return succeeded, failed, skipped
 
 
-# ---------------------------------------------------------------------------
-# Main loop
-# ---------------------------------------------------------------------------
+def run_sync(config: Config) -> None:
+    try:
+        state = load_state(config.state_file)
+    except StateError as exc:
+        logger.error("%s — refusing to overwrite it", exc)
+        return
+
+    try:
+        books = get_currently_reading(config.hardcover_api_key)
+        current_books = {book["id"]: book for book in books}
+        previous_books = state["source_books"]
+        missing_ids = [
+            int(book["user_book_id"])
+            for key, book in previous_books.items()
+            if (
+                key not in current_books
+                and key not in state["pending_finished"]
+                and book.get("user_book_id") is not None
+            )
+        ]
+        statuses = get_book_statuses(config.hardcover_api_key, missing_ids)
+    except HardcoverAPIError as exc:
+        logger.error("%s — preserving state and skipping this cycle", exc)
+        return
+
+    for book_id, status in statuses.items():
+        if status.get("status_id") == 3:
+            state["pending_finished"][book_id] = status
+            logger.info("Detected finished book: '%s'", status["title"])
+        else:
+            logger.info(
+                "'%s' left Currently Reading with status %s; no finish action queued",
+                status["title"],
+                status.get("status_id"),
+            )
+
+    state["source_books"] = current_books
+    totals = {"succeeded": 0, "failed": 0, "skipped": 0}
+
+    destinations = [
+        (
+            "Goodreads",
+            "goodreads",
+            _enabled(GOODREADS_COOKIES, config.goodreads_email, config.goodreads_password),
+            lambda: GoodreadsSync(config.goodreads_email, config.goodreads_password),
+        ),
+        (
+            "StoryGraph",
+            "storygraph",
+            _enabled(STORYGRAPH_COOKIES, config.storygraph_email, config.storygraph_password),
+            lambda: StorygraphSync(config.storygraph_email, config.storygraph_password),
+        ),
+    ]
+
+    for display_name, state_name, enabled, factory in destinations:
+        if not enabled:
+            logger.info("%s is not configured — skipping", display_name)
+            continue
+        try:
+            with factory() as adapter:
+                if not adapter.login():
+                    logger.error("%s login failed; pending work will be retried", display_name)
+                    totals["failed"] += len(current_books) + len(state["pending_finished"])
+                    continue
+                counts = _sync_destination(
+                    display_name,
+                    adapter,
+                    state["destinations"][state_name],
+                    current_books,
+                    state["pending_finished"],
+                )
+                for key, value in zip(("succeeded", "failed", "skipped"), counts):
+                    totals[key] += value
+        except Exception as exc:
+            logger.exception("%s session failed: %s", display_name, exc)
+            totals["failed"] += len(current_books) + len(state["pending_finished"])
+
+    try:
+        save_state(config.state_file, state)
+    except OSError:
+        return
+
+    logger.info(
+        "Sync complete: %d succeeded, %d failed, %d unchanged",
+        totals["succeeded"],
+        totals["failed"],
+        totals["skipped"],
+    )
+
 
 def main() -> None:
-    logger.info("Hardcover Sync v%s starting (interval: %d min)", VERSION, SYNC_INTERVAL // 60)
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        logger.error("Configuration error: %s", exc)
+        raise SystemExit(2) from exc
 
+    interval_minutes = config.sync_interval_seconds // 60
+    logger.info("Hardcover Sync v%s starting (interval: %d min)", VERSION, interval_minutes)
     running = True
 
-    def _stop(sig, _frame):
+    def _stop(_sig, _frame):
         nonlocal running
         logger.info("Shutdown signal received")
         running = False
@@ -173,16 +194,13 @@ def main() -> None:
 
     while running:
         try:
-            run_sync()
+            run_sync(config)
         except Exception as exc:
             logger.exception("Unexpected error during sync: %s", exc)
-
         if not running:
             break
-
-        logger.info("Next sync in %d minutes", SYNC_INTERVAL // 60)
-        # Sleep in 1-second ticks so SIGTERM is handled promptly
-        for _ in range(SYNC_INTERVAL):
+        logger.info("Next sync in %d minutes", interval_minutes)
+        for _ in range(config.sync_interval_seconds):
             if not running:
                 break
             time.sleep(1)
