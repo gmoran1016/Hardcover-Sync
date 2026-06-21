@@ -6,6 +6,8 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         chromium \
         chromium-driver \
+        xvfb \
+        xauth \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- working directory ----
@@ -17,7 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # ---- application code ----
 COPY main.py config.py hardcover.py goodreads.py storygraph.py driver.py \
-     matching.py sync_result.py sync_state.py ./
+     cookie_bundle.py matching.py sync_result.py sync_state.py ./
 
 # ---- non-root user ----
 RUN useradd -m -u 1000 appuser && chown -R appuser /app
@@ -27,6 +29,8 @@ RUN mkdir /app/state
 # ---- runtime config ----
 ENV PYTHONUNBUFFERED=1 \
     CHROME_BIN=/usr/bin/chromium \
-    CHROMEDRIVER_PATH=/usr/bin/chromedriver
+    CHROMEDRIVER_PATH=/usr/bin/chromedriver \
+    CHROME_HEADLESS=0 \
+    CHROME_NO_SANDBOX=1
 
-CMD ["python", "main.py"]
+CMD ["xvfb-run", "-a", "python", "main.py"]

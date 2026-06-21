@@ -24,7 +24,6 @@ Flow for each book:
   5. Click Update progress and submit the page count.
 """
 
-import json
 import logging
 import os
 import time
@@ -38,7 +37,8 @@ from selenium.common.exceptions import (
     TimeoutException,
 )
 
-from driver import create_driver
+from cookie_bundle import load_cookie_bundle
+from driver import create_driver, set_user_agent
 from matching import choose_match, normalise
 from sync_result import SyncResult
 
@@ -196,24 +196,38 @@ class GoodreadsSync:
     def _login_with_cookies(self) -> bool:
         logger.info("Loading Goodreads session from saved cookies…")
         try:
-            with open(COOKIES_FILE) as f:
-                cookies = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
+            bundle = load_cookie_bundle(COOKIES_FILE)
+        except (OSError, ValueError) as exc:
             logger.error("Could not read cookies file: %s", exc)
             return False
+
+        if bundle.user_agent:
+            set_user_agent(
+                self.driver,
+                bundle.user_agent,
+                bundle.user_agent_metadata,
+            )
+            logger.info("Using browser identity captured with Goodreads cookies")
+        else:
+            logger.warning(
+                "Goodreads cookies use the legacy format without browser identity. "
+                "Re-run setup_cookies.py once after upgrading."
+            )
 
         # Must navigate to the domain before adding cookies
         self.driver.get(GOODREADS_URL)
         time.sleep(1)
 
-        for cookie in cookies:
+        for cookie in bundle.cookies:
             cookie.pop("sameSite", None)  # can cause errors in some versions
             try:
                 self.driver.add_cookie(cookie)
             except Exception as exc:
                 logger.debug("Skipped cookie '%s': %s", cookie.get("name"), exc)
 
-        self.driver.refresh()
+        # Use a fresh navigation rather than refresh. Goodreads' WAF can return
+        # an empty 202 response when a newly cookie-seeded session is refreshed.
+        self.driver.get(GOODREADS_URL)
         try:
             WebDriverWait(self.driver, 15).until(
                 lambda driver: len(driver.page_source) > 1000
@@ -229,6 +243,11 @@ class GoodreadsSync:
             logger.info("Goodreads authenticated via saved cookies")
             return True
 
+        logger.warning(
+            "Goodreads cookie authentication was rejected (URL: %s, title: %r)",
+            self.driver.current_url,
+            self.driver.title,
+        )
         return False
 
     def _login_with_form(self) -> bool:
