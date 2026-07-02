@@ -149,7 +149,7 @@ The first lines should appear immediately, before any network requests:
 ```text
 [hardcover-sync-entrypoint] container starting
 [hardcover-sync-entrypoint] virtual display is ready
-Hardcover Sync v2.0.4 starting
+Hardcover Sync v2.0.5 starting
 ```
 
 If those entrypoint lines do not appear, Unraid is running an old image or has
@@ -227,6 +227,11 @@ search result. Confirmed destination URLs are persisted in the state volume.
 Keep `shm_size: "256mb"` in your compose file (or `--shm-size=256m` in
 Unraid). Chrome needs more shared memory than Docker's 64 MB default. The
 container does not require `SYS_ADMIN`; remove that capability when upgrading.
+Each browser launch uses a fresh temporary Chrome profile/cache directory and
+writes ChromeDriver startup diagnostics to
+`/tmp/hardcover-sync-chromedriver.log` inside the container. If Chrome exits
+before Selenium can attach, inspect that file with
+`docker compose exec hardcover-sync tail -100 /tmp/hardcover-sync-chromedriver.log`.
 
 ### Percentages differ between platforms
 Different platforms may have your book in a different edition with a different page count. This is expected — the sync pushes the absolute page number, and each platform calculates its own percentage.
