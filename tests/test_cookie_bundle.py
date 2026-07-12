@@ -27,6 +27,16 @@ class CookieBundleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             decode_cookie_bundle({"cookies": "not-a-list"})
 
+    def test_non_object_cookie_record_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "cookie records"):
+            decode_cookie_bundle(["session=secret"])
+
+    def test_decoded_cookies_do_not_alias_input(self):
+        source = [{"name": "session", "value": "redacted", "sameSite": "Lax"}]
+        bundle = decode_cookie_bundle(source)
+        bundle.cookies[0].pop("sameSite")
+        self.assertEqual(source[0]["sameSite"], "Lax")
+
 
 if __name__ == "__main__":
     unittest.main()
