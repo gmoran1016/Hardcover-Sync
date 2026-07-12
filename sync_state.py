@@ -38,6 +38,30 @@ def _migrate_legacy(data: dict) -> dict:
     return state
 
 
+def _mapping(value, field: str) -> dict:
+    if not isinstance(value, dict):
+        raise StateError(f"Sync state field '{field}' must be an object")
+    return dict(value)
+
+
+def _normalize_v2(data: dict) -> dict:
+    state = empty_state()
+    state["source_books"] = _mapping(data.get("source_books", {}), "source_books")
+    state["pending_finished"] = _mapping(
+        data.get("pending_finished", {}), "pending_finished"
+    )
+    destinations = _mapping(data.get("destinations", {}), "destinations")
+    for name in ("goodreads", "storygraph"):
+        destination = _mapping(destinations.get(name, {}), f"destinations.{name}")
+        state["destinations"][name] = {
+            "books": _mapping(destination.get("books", {}), f"destinations.{name}.books"),
+            "mappings": _mapping(
+                destination.get("mappings", {}), f"destinations.{name}.mappings"
+            ),
+        }
+    return state
+
+
 def load_state(path: str) -> dict:
     if not os.path.exists(path):
         return empty_state()
@@ -47,17 +71,14 @@ def load_state(path: str) -> dict:
     except (OSError, json.JSONDecodeError) as exc:
         raise StateError(f"Sync state is unreadable: {exc}") from exc
 
+    if not isinstance(data, dict):
+        raise StateError("Sync state must be a top-level object")
+
     if data.get("schema_version") != SCHEMA_VERSION:
         logger.info("Migrating legacy sync state to schema v%d", SCHEMA_VERSION)
         return _migrate_legacy(data)
 
-    state = empty_state()
-    state.update(data)
-    for name in ("goodreads", "storygraph"):
-        state["destinations"].setdefault(name, {"books": {}, "mappings": {}})
-        state["destinations"][name].setdefault("books", {})
-        state["destinations"][name].setdefault("mappings", {})
-    return state
+    return _normalize_v2(data)
 
 
 def save_state(path: str, state: dict) -> None:

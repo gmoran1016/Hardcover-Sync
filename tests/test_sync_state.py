@@ -37,6 +37,22 @@ class StateTests(unittest.TestCase):
             with open(path, encoding="utf-8") as handle:
                 self.assertEqual(handle.read(), "{broken")
 
+    def test_non_object_state_raises_controlled_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "state.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump([], handle)
+            with self.assertRaisesRegex(StateError, "top-level object"):
+                load_state(path)
+
+    def test_invalid_schema_v2_collections_raise_controlled_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "state.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"schema_version": 2, "destinations": []}, handle)
+            with self.assertRaisesRegex(StateError, "destinations"):
+                load_state(path)
+
 
 if __name__ == "__main__":
     unittest.main()
