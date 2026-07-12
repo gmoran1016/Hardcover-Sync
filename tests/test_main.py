@@ -91,6 +91,22 @@ class MainTests(unittest.TestCase):
             state = load_state(path)
             self.assertNotIn("7", state["destinations"]["goodreads"]["books"])
 
+    def test_destination_exception_does_not_block_later_books(self):
+        class RaisingAdapter(FakeAdapter):
+            def update_progress(self, book, _url=None):
+                if book["id"] == "7":
+                    raise RuntimeError("browser tab crashed")
+                return SyncResult.ok(f"https://example.test/{book['id']}")
+
+        second = dict(BOOK, id="8", user_book_id=8, book_id=80, title="Foundation")
+        destination = {"books": {}, "mappings": {}}
+        counts = main._sync_destination(
+            "Goodreads", RaisingAdapter(), destination, {"7": BOOK, "8": second}, {}
+        )
+        self.assertEqual(counts, (1, 1, 0))
+        self.assertNotIn("7", destination["books"])
+        self.assertIn("8", destination["books"])
+
     def test_success_records_destination_and_mapping(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "state.json")

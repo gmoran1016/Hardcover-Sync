@@ -38,6 +38,16 @@ def _coerce_result(value, target_url: str | None = None) -> SyncResult:
     return SyncResult.ok(target_url) if value else SyncResult.failed("operation failed")
 
 
+def _run_operation(name: str, action, book: dict, target_url: str | None) -> SyncResult:
+    try:
+        return _coerce_result(action(book, target_url), target_url)
+    except Exception as exc:
+        logger.exception("%s operation crashed for '%s': %s", name, book["title"], exc)
+        return SyncResult.failed(
+            "unexpected destination operation failure", target_url=target_url
+        )
+
+
 def _sync_destination(
     name: str,
     adapter,
@@ -54,9 +64,8 @@ def _sync_destination(
         if synced.get(book_id) == signature:
             skipped += 1
             continue
-        result = _coerce_result(
-            adapter.update_progress(book, mappings.get(book_id)),
-            mappings.get(book_id),
+        result = _run_operation(
+            name, adapter.update_progress, book, mappings.get(book_id)
         )
         if result.success:
             synced[book_id] = signature
@@ -71,9 +80,8 @@ def _sync_destination(
         if synced.get(book_id) == "finished":
             skipped += 1
             continue
-        result = _coerce_result(
-            adapter.mark_finished(book, mappings.get(book_id)),
-            mappings.get(book_id),
+        result = _run_operation(
+            name, adapter.mark_finished, book, mappings.get(book_id)
         )
         if result.success:
             synced[book_id] = "finished"
