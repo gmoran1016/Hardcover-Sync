@@ -201,12 +201,24 @@ def get_book_statuses(api_key: str, ids: list[int]) -> dict[str, dict]:
             book = {}
         if not isinstance(book, dict):
             raise HardcoverAPIError("Hardcover returned a malformed book object")
-        key = str(user_book.get("id"))
+        user_book_id = user_book.get("id")
+        book_id = book.get("id")
+        title = book.get("title")
+        if (
+            user_book_id is None
+            or book_id is None
+            or not isinstance(title, str)
+            or not title.strip()
+        ):
+            raise HardcoverAPIError(
+                "Hardcover returned a book without stable IDs or title"
+            )
+        key = str(user_book_id)
         statuses[key] = {
             "id": key,
-            "user_book_id": user_book.get("id"),
-            "book_id": book.get("id"),
-            "title": book.get("title", "Unknown"),
+            "user_book_id": user_book_id,
+            "book_id": book_id,
+            "title": title,
             "author": _author(book),
             "total_pages": book.get("pages"),
             "status_id": user_book.get("status_id"),

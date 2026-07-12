@@ -77,6 +77,30 @@ class MainTests(unittest.TestCase):
             with open(path, "rb") as handle:
                 self.assertEqual(handle.read(), before)
 
+    def test_malformed_finished_status_skips_destinations_and_preserves_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "state.json")
+            state = empty_state()
+            state["source_books"]["7"] = BOOK
+            save_state(path, state)
+            with open(path, "rb") as handle:
+                before = handle.read()
+            with (
+                patch.object(main, "get_currently_reading", return_value=[]),
+                patch.object(
+                    main,
+                    "get_book_statuses",
+                    side_effect=HardcoverAPIError(
+                        "Hardcover returned a book without stable IDs or title"
+                    ),
+                ),
+                patch.object(main, "GoodreadsSync") as destination,
+            ):
+                main.run_sync(self.config(path))
+            destination.assert_not_called()
+            with open(path, "rb") as handle:
+                self.assertEqual(handle.read(), before)
+
     def test_failed_destination_operation_remains_pending(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "state.json")

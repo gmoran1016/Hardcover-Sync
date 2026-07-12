@@ -18,8 +18,9 @@ jobs:
       - run: python -m pip check
       - run: python -m ruff check .
       - run: python -m ruff format --check .
-      - run: python -m py_compile *.py
+      - run: python -m compileall -q .
       - run: python -m unittest discover -v
+      - run: docker compose config --quiet
       - run: docker build -t hardcover-sync:test .
       - name: Verify container entrypoint logs
         run: |

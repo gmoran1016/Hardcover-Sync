@@ -40,11 +40,77 @@ class HardcoverTests(unittest.TestCase):
             with self.assertRaisesRegex(HardcoverAPIError, "reading progress"):
                 get_currently_reading("token")
 
+    def test_malformed_edition_raises_controlled_error(self):
+        payload = {
+            "data": {
+                "me": [
+                    {
+                        "user_books": [
+                            {
+                                "id": 1,
+                                "book": {"id": 2, "title": "Dune"},
+                                "user_book_reads": [{"edition": []}],
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        with self.response_with(payload):
+            with self.assertRaisesRegex(HardcoverAPIError, "edition object"):
+                get_currently_reading("token")
+
+    def test_malformed_author_raises_controlled_error(self):
+        payload = {
+            "data": {
+                "me": [
+                    {
+                        "user_books": [
+                            {
+                                "id": 1,
+                                "book": {
+                                    "id": 2,
+                                    "title": "Dune",
+                                    "contributions": [{"author": []}],
+                                },
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        with self.response_with(payload):
+            with self.assertRaisesRegex(HardcoverAPIError, "author object"):
+                get_currently_reading("token")
+
     def test_non_object_status_entry_raises_controlled_error(self):
         payload = {"data": {"me": [{"user_books": [None]}]}}
         with self.response_with(payload):
             with self.assertRaisesRegex(HardcoverAPIError, "book entry"):
                 get_book_statuses("token", [1])
+
+    def test_non_object_status_book_raises_controlled_error(self):
+        payload = {"data": {"me": [{"user_books": [{"id": 1, "book": []}]}]}}
+        with self.response_with(payload):
+            with self.assertRaisesRegex(HardcoverAPIError, "book object"):
+                get_book_statuses("token", [1])
+
+    def test_status_book_requires_stable_ids_and_non_empty_string_title(self):
+        malformed = (
+            {"id": None, "book": {"id": 2, "title": "Dune"}},
+            {"id": 1, "book": {"id": None, "title": "Dune"}},
+            {"id": 1, "book": {"id": 2, "title": ""}},
+            {"id": 1, "book": {"id": 2, "title": "   "}},
+            {"id": 1, "book": {"id": 2, "title": 123}},
+        )
+        for user_book in malformed:
+            with self.subTest(user_book=user_book):
+                payload = {"data": {"me": [{"user_books": [user_book]}]}}
+                with self.response_with(payload):
+                    with self.assertRaisesRegex(
+                        HardcoverAPIError, "stable IDs or title"
+                    ):
+                        get_book_statuses("token", [1])
 
     def test_non_object_me_entry_raises_controlled_error(self):
         payload = {"data": {"me": [None]}}
