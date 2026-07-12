@@ -123,7 +123,20 @@ def run_sync(config: Config) -> None:
                 status.get("status_id"),
             )
 
-    state["source_books"] = current_books
+    resolved_missing = set(statuses)
+    unresolved_books = {
+        key: book
+        for key, book in previous_books.items()
+        if key not in current_books
+        and key not in state["pending_finished"]
+        and key not in resolved_missing
+    }
+    if unresolved_books:
+        logger.info(
+            "Retaining %d book(s) with unresolved Hardcover statuses for retry",
+            len(unresolved_books),
+        )
+    state["source_books"] = {**unresolved_books, **current_books}
     totals = {"succeeded": 0, "failed": 0, "skipped": 0}
 
     destinations = [

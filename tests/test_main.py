@@ -123,6 +123,20 @@ class MainTests(unittest.TestCase):
             self.assertIn("7", state["pending_finished"])
             self.assertEqual(state["destinations"]["goodreads"]["books"]["7"], "finished")
 
+    def test_missing_status_record_is_preserved_for_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "state.json")
+            state = empty_state()
+            state["source_books"]["7"] = BOOK
+            save_state(path, state)
+            with (
+                patch.object(main, "get_currently_reading", return_value=[]),
+                patch.object(main, "get_book_statuses", return_value={}),
+                patch.object(main, "GoodreadsSync", FakeAdapter),
+            ):
+                main.run_sync(self.config(path))
+            self.assertIn("7", load_state(path)["source_books"])
+
 
 if __name__ == "__main__":
     unittest.main()
