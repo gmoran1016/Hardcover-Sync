@@ -114,10 +114,12 @@ class StorygraphSync:
 
             # Confirmed selectors from live page inspection
             wait.until(
-                EC.presence_of_element_located((
-                    By.CSS_SELECTOR,
-                    '#user_email, input[name="user[email]"], input[type="email"]',
-                ))
+                EC.presence_of_element_located(
+                    (
+                        By.CSS_SELECTOR,
+                        '#user_email, input[name="user[email]"], input[type="email"]',
+                    )
+                )
             ).send_keys(self.email)
             time.sleep(0.4)
 
@@ -163,7 +165,9 @@ class StorygraphSync:
         try:
             book_url = book_url or self._search_book(title, book.get("author"))
             if not book_url:
-                logger.warning("Could not find '%s' on StoryGraph to mark finished", title)
+                logger.warning(
+                    "Could not find '%s' on StoryGraph to mark finished", title
+                )
                 return SyncResult.failed("no unambiguous StoryGraph search result")
 
             self.driver.get(book_url)
@@ -181,21 +185,31 @@ class StorygraphSync:
 
             # The finish button is inside the reading-status dropdown — expand it first.
             # Use the displayed one (there's also a hidden mobile duplicate at y=0).
-            expand_btns = self.driver.find_elements(By.CSS_SELECTOR, ".expand-dropdown-button")
+            expand_btns = self.driver.find_elements(
+                By.CSS_SELECTOR, ".expand-dropdown-button"
+            )
             expand_btn = next((b for b in expand_btns if b.is_displayed()), None)
             if expand_btn:
-                self.driver.execute_script("arguments[0].scrollIntoView(true);", expand_btn)
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView(true);", expand_btn
+                )
                 self.driver.execute_script("arguments[0].click();", expand_btn)
                 time.sleep(0.5)
 
             wait.until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".mark-as-finished-btn"))
+                EC.presence_of_all_elements_located(
+                    (By.CSS_SELECTOR, ".mark-as-finished-btn")
+                )
             )
-            all_finished = self.driver.find_elements(By.CSS_SELECTOR, ".mark-as-finished-btn")
+            all_finished = self.driver.find_elements(
+                By.CSS_SELECTOR, ".mark-as-finished-btn"
+            )
             finished_btn = next((b for b in all_finished if b.is_displayed()), None)
             if finished_btn is None:
                 logger.error("mark-as-finished button not visible for '%s'", title)
-                return SyncResult.failed("finish button was not visible", target_url=book_url)
+                return SyncResult.failed(
+                    "finish button was not visible", target_url=book_url
+                )
             self.driver.execute_script("arguments[0].click();", finished_btn)
             WebDriverWait(self.driver, 10).until(EC.staleness_of(finished_btn))
             logger.info("StoryGraph: marked '%s' as finished", title)
@@ -232,7 +246,9 @@ class StorygraphSync:
 
             if self._do_update_progress(pages, pct, total):
                 return SyncResult.ok(book_url)
-            return SyncResult.failed("progress form could not be saved", target_url=book_url)
+            return SyncResult.failed(
+                "progress form could not be saved", target_url=book_url
+            )
 
         except Exception as exc:
             logger.error("Error updating StoryGraph for '%s': %s", title, exc)
@@ -250,10 +266,12 @@ class StorygraphSync:
             wait = WebDriverWait(self.driver, 10)
             # StoryGraph search result containers
             results = wait.until(
-                EC.presence_of_all_elements_located((
-                    By.CSS_SELECTOR,
-                    ".book-title-author-and-series, h3.font-semibold, .book-title",
-                ))
+                EC.presence_of_all_elements_located(
+                    (
+                        By.CSS_SELECTOR,
+                        ".book-title-author-and-series, h3.font-semibold, .book-title",
+                    )
+                )
             )
 
             candidates = []
@@ -313,7 +331,9 @@ class StorygraphSync:
             # use JS clicks throughout to bypass visibility checks.
             try:
                 WebDriverWait(self.driver, 8).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, ".expand-dropdown-button"))
+                    EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, ".expand-dropdown-button")
+                    )
                 )
                 clicked = self.driver.execute_script("""
                     var btns = document.querySelectorAll('.expand-dropdown-button');
@@ -356,11 +376,16 @@ class StorygraphSync:
             logger.debug("StoryGraph read-status-button JS result: %s", result)
 
             if result.startswith("already-reading"):
-                logger.info("Book already on Currently Reading shelf on StoryGraph (no shelf change needed)")
+                logger.info(
+                    "Book already on Currently Reading shelf on StoryGraph (no shelf change needed)"
+                )
                 return True
 
             if not result.startswith("clicked"):
-                logger.warning("'Currently reading' shelf button not found on StoryGraph page: %s", result)
+                logger.warning(
+                    "'Currently reading' shelf button not found on StoryGraph page: %s",
+                    result,
+                )
                 return False
 
             time.sleep(2)
@@ -441,7 +466,9 @@ class StorygraphSync:
             track_btn = self._find_track_progress_button()
             if not track_btn:
                 if not self._ensure_currently_reading():
-                    logger.error("Could not move book to Currently Reading on StoryGraph")
+                    logger.error(
+                        "Could not move book to Currently Reading on StoryGraph"
+                    )
                     return False
                 # After shelving, expand again and wait for track-progress-button
                 time.sleep(3)
@@ -457,12 +484,15 @@ class StorygraphSync:
                     return False
 
             # JS-click the track progress button to open the inline form
-            clicked = self.driver.execute_script("""
+            clicked = self.driver.execute_script(
+                """
                 var btn = arguments[0];
                 btn.scrollIntoView(true);
                 btn.click();
                 return btn.offsetParent !== null ? 'visible' : 'hidden';
-            """, track_btn)
+            """,
+                track_btn,
+            )
             logger.debug("track-progress-button click result: %s", clicked)
             time.sleep(1)
 
@@ -479,15 +509,21 @@ class StorygraphSync:
             # Stimulus/Rails UJS picks up the change regardless of visibility state.
             try:
                 wait.until(
-                    EC.presence_of_element_located((
-                        By.CSS_SELECTOR, "input#read_status_progress_number",
-                    ))
+                    EC.presence_of_element_located(
+                        (
+                            By.CSS_SELECTOR,
+                            "input#read_status_progress_number",
+                        )
+                    )
                 )
             except TimeoutException:
-                logger.error("Progress input never appeared after clicking track-progress-button")
+                logger.error(
+                    "Progress input never appeared after clicking track-progress-button"
+                )
                 return False
 
-            result = self.driver.execute_script("""
+            result = self.driver.execute_script(
+                """
                 var inputs = document.querySelectorAll('input#read_status_progress_number');
                 var inp = null;
                 for (var i of inputs) {
@@ -500,7 +536,9 @@ class StorygraphSync:
                 inp.dispatchEvent(new Event('input', {bubbles: true}));
                 inp.dispatchEvent(new Event('change', {bubbles: true}));
                 return 'set:' + inp.value;
-            """, value_to_set)
+            """,
+                value_to_set,
+            )
             logger.debug("Progress input JS result: %s", result)
             if not result or not result.startswith("set:"):
                 logger.error("Could not set progress input value: %s", result)
@@ -516,13 +554,17 @@ class StorygraphSync:
                 return 'none';
             """)
             logger.debug("Save button JS result: %s", save_result)
-            if save_result == 'none':
+            if save_result == "none":
                 logger.error("Save button not found after filling progress")
                 return False
-            wait.until(EC.invisibility_of_element_located((
-                By.CSS_SELECTOR,
-                "input#read_status_progress_number",
-            )))
+            wait.until(
+                EC.invisibility_of_element_located(
+                    (
+                        By.CSS_SELECTOR,
+                        "input#read_status_progress_number",
+                    )
+                )
+            )
 
             logger.info(
                 "StoryGraph progress saved: %s pages",

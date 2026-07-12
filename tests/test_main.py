@@ -77,6 +77,30 @@ class MainTests(unittest.TestCase):
             with open(path, "rb") as handle:
                 self.assertEqual(handle.read(), before)
 
+    def test_malformed_finished_status_skips_destinations_and_preserves_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "state.json")
+            state = empty_state()
+            state["source_books"]["7"] = BOOK
+            save_state(path, state)
+            with open(path, "rb") as handle:
+                before = handle.read()
+            with (
+                patch.object(main, "get_currently_reading", return_value=[]),
+                patch.object(
+                    main,
+                    "get_book_statuses",
+                    side_effect=HardcoverAPIError(
+                        "Hardcover returned a book without stable IDs or title"
+                    ),
+                ),
+                patch.object(main, "GoodreadsSync") as destination,
+            ):
+                main.run_sync(self.config(path))
+            destination.assert_not_called()
+            with open(path, "rb") as handle:
+                self.assertEqual(handle.read(), before)
+
     def test_failed_destination_operation_remains_pending(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "state.json")
@@ -90,6 +114,22 @@ class MainTests(unittest.TestCase):
                 main.run_sync(self.config(path))
             state = load_state(path)
             self.assertNotIn("7", state["destinations"]["goodreads"]["books"])
+
+    def test_destination_exception_does_not_block_later_books(self):
+        class RaisingAdapter(FakeAdapter):
+            def update_progress(self, book, _url=None):
+                if book["id"] == "7":
+                    raise RuntimeError("browser tab crashed")
+                return SyncResult.ok(f"https://example.test/{book['id']}")
+
+        second = dict(BOOK, id="8", user_book_id=8, book_id=80, title="Foundation")
+        destination = {"books": {}, "mappings": {}}
+        counts = main._sync_destination(
+            "Goodreads", RaisingAdapter(), destination, {"7": BOOK, "8": second}, {}
+        )
+        self.assertEqual(counts, (1, 1, 0))
+        self.assertNotIn("7", destination["books"])
+        self.assertIn("8", destination["books"])
 
     def test_success_records_destination_and_mapping(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -121,7 +161,23 @@ class MainTests(unittest.TestCase):
                 main.run_sync(self.config(path))
             state = load_state(path)
             self.assertIn("7", state["pending_finished"])
-            self.assertEqual(state["destinations"]["goodreads"]["books"]["7"], "finished")
+            self.assertEqual(
+                state["destinations"]["goodreads"]["books"]["7"], "finished"
+            )
+
+    def test_missing_status_record_is_preserved_for_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "state.json")
+            state = empty_state()
+            state["source_books"]["7"] = BOOK
+            save_state(path, state)
+            with (
+                patch.object(main, "get_currently_reading", return_value=[]),
+                patch.object(main, "get_book_statuses", return_value={}),
+                patch.object(main, "GoodreadsSync", FakeAdapter),
+            ):
+                main.run_sync(self.config(path))
+            self.assertIn("7", load_state(path)["source_books"])
 
 
 if __name__ == "__main__":

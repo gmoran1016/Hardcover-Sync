@@ -14,9 +14,14 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install -r requirements.txt
-      - run: python -m py_compile *.py
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pip check
+      - run: python -m ruff check .
+      - run: python -m ruff format --check .
+      - run: python -m compileall -q .
       - run: python -m unittest discover -v
+      - run: cp .env.example .env
+      - run: docker compose config --quiet
       - run: docker build -t hardcover-sync:test .
       - name: Verify container entrypoint logs
         run: |

@@ -12,7 +12,9 @@ class MatchingTests(unittest.TestCase):
             ("The Stand by Stephen King", "correct"),
             ("The Stand by Roberto Bolaño", "wrong"),
         ]
-        self.assertEqual(choose_match("The Stand", "Stephen King", candidates), "correct")
+        self.assertEqual(
+            choose_match("The Stand", "Stephen King", candidates), "correct"
+        )
 
     def test_choose_match_does_not_fall_back_to_first_result(self):
         candidates = [("A Completely Different Book", "wrong")]

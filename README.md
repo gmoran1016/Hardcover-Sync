@@ -194,16 +194,42 @@ terminals and Docker log collectors.
 
 ```
 main.py           Entry point and sync loop
+config.py         Environment configuration validation
+cookie_bundle.py  Cookie and browser identity persistence
+matching.py       Destination search-result matching
+sync_result.py    Per-destination sync outcomes
+sync_state.py     Durable progress and destination state
+container_entrypoint.py  Container startup and virtual display
 hardcover.py      Hardcover GraphQL API client
 goodreads.py      Goodreads Selenium automation
 storygraph.py     StoryGraph Selenium automation
 driver.py         Shared Chrome WebDriver factory
 setup_cookies.py  One-time interactive cookie setup
+tests/            Automated test suite
+.github/workflows/docker-publish.yml  CI quality and Docker image validation
 requirements.txt
+requirements-dev.txt
 Dockerfile
 docker-compose.yml
 .env.example
 ```
+
+---
+
+## Development verification
+
+Install the development environment and run all local quality gates:
+
+```bash
+pip install -r requirements-dev.txt
+python -m ruff check .
+python -m ruff format --check .
+python -m unittest discover -v
+python -m compileall -q .
+```
+
+Docker image validation runs in GitHub Actions. When Docker is installed, run
+the same image build locally with `docker build -t hardcover-sync:test .`.
 
 ---
 

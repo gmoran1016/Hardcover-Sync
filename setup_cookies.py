@@ -85,7 +85,9 @@ def setup_goodreads(driver: webdriver.Chrome) -> None:
         save_cookies(driver, "goodreads.json")
         print("  Goodreads cookies saved successfully.")
     else:
-        print(f"  WARNING: doesn't look like login succeeded (URL: {driver.current_url})")
+        print(
+            f"  WARNING: doesn't look like login succeeded (URL: {driver.current_url})"
+        )
         choice = input("  Save anyway? [y/N]: ")
         if choice.strip().lower() == "y":
             save_cookies(driver, "goodreads.json")
@@ -97,7 +99,10 @@ def setup_storygraph(driver: webdriver.Chrome) -> None:
     print("Log in to StoryGraph in the browser window.")
     input("Press Enter here once you are fully logged in: ")
 
-    if "thestorygraph.com" in driver.current_url and "sign_in" not in driver.current_url:
+    if (
+        "thestorygraph.com" in driver.current_url
+        and "sign_in" not in driver.current_url
+    ):
         save_cookies(driver, "storygraph.json")
         print("  StoryGraph cookies saved successfully.")
     else:
