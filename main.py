@@ -74,7 +74,9 @@ def _sync_destination(
             succeeded += 1
         else:
             failed += 1
-            logger.error("%s update failed for '%s': %s", name, book["title"], result.reason)
+            logger.error(
+                "%s update failed for '%s': %s", name, book["title"], result.reason
+            )
 
     for book_id, book in pending_finished.items():
         if synced.get(book_id) == "finished":
@@ -90,7 +92,9 @@ def _sync_destination(
             succeeded += 1
         else:
             failed += 1
-            logger.error("%s finish failed for '%s': %s", name, book["title"], result.reason)
+            logger.error(
+                "%s finish failed for '%s': %s", name, book["title"], result.reason
+            )
 
     return succeeded, failed, skipped
 
@@ -151,13 +155,17 @@ def run_sync(config: Config) -> None:
         (
             "Goodreads",
             "goodreads",
-            _enabled(GOODREADS_COOKIES, config.goodreads_email, config.goodreads_password),
+            _enabled(
+                GOODREADS_COOKIES, config.goodreads_email, config.goodreads_password
+            ),
             lambda: GoodreadsSync(config.goodreads_email, config.goodreads_password),
         ),
         (
             "StoryGraph",
             "storygraph",
-            _enabled(STORYGRAPH_COOKIES, config.storygraph_email, config.storygraph_password),
+            _enabled(
+                STORYGRAPH_COOKIES, config.storygraph_email, config.storygraph_password
+            ),
             lambda: StorygraphSync(config.storygraph_email, config.storygraph_password),
         ),
     ]
@@ -169,8 +177,12 @@ def run_sync(config: Config) -> None:
         try:
             with factory() as adapter:
                 if not adapter.login():
-                    logger.error("%s login failed; pending work will be retried", display_name)
-                    totals["failed"] += len(current_books) + len(state["pending_finished"])
+                    logger.error(
+                        "%s login failed; pending work will be retried", display_name
+                    )
+                    totals["failed"] += len(current_books) + len(
+                        state["pending_finished"]
+                    )
                     continue
                 counts = _sync_destination(
                     display_name,
@@ -204,12 +216,16 @@ def run_auth_diagnostics(config: Config) -> bool:
     checks = [
         (
             "Goodreads",
-            _enabled(GOODREADS_COOKIES, config.goodreads_email, config.goodreads_password),
+            _enabled(
+                GOODREADS_COOKIES, config.goodreads_email, config.goodreads_password
+            ),
             lambda: GoodreadsSync(config.goodreads_email, config.goodreads_password),
         ),
         (
             "StoryGraph",
-            _enabled(STORYGRAPH_COOKIES, config.storygraph_email, config.storygraph_password),
+            _enabled(
+                STORYGRAPH_COOKIES, config.storygraph_email, config.storygraph_password
+            ),
             lambda: StorygraphSync(config.storygraph_email, config.storygraph_password),
         ),
     ]
@@ -228,7 +244,9 @@ def run_auth_diagnostics(config: Config) -> bool:
         except Exception as exc:
             logger.exception("%s authentication diagnostic crashed: %s", name, exc)
             success = False
-    logger.info("Authentication diagnostics complete: %s", "PASS" if success else "FAIL")
+    logger.info(
+        "Authentication diagnostics complete: %s", "PASS" if success else "FAIL"
+    )
     return success
 
 
@@ -257,7 +275,9 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(2) from exc
 
     interval_minutes = config.sync_interval_seconds // 60
-    logger.info("Hardcover Sync v%s starting (interval: %d min)", VERSION, interval_minutes)
+    logger.info(
+        "Hardcover Sync v%s starting (interval: %d min)", VERSION, interval_minutes
+    )
 
     if args.diagnose_auth:
         raise SystemExit(0 if run_auth_diagnostics(config) else 1)

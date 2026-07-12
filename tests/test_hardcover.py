@@ -55,7 +55,16 @@ class HardcoverTests(unittest.TestCase):
     def test_non_list_contributions_raise_controlled_error(self):
         payload = {
             "data": {
-                "me": [{"user_books": [{"id": 1, "book": {"id": 2, "title": "Dune", "contributions": {}}}]}]
+                "me": [
+                    {
+                        "user_books": [
+                            {
+                                "id": 1,
+                                "book": {"id": 2, "title": "Dune", "contributions": {}},
+                            }
+                        ]
+                    }
+                ]
             }
         }
         with self.response_with(payload):

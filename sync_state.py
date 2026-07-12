@@ -54,7 +54,9 @@ def _normalize_v2(data: dict) -> dict:
     for name in ("goodreads", "storygraph"):
         destination = _mapping(destinations.get(name, {}), f"destinations.{name}")
         state["destinations"][name] = {
-            "books": _mapping(destination.get("books", {}), f"destinations.{name}.books"),
+            "books": _mapping(
+                destination.get("books", {}), f"destinations.{name}.books"
+            ),
             "mappings": _mapping(
                 destination.get("mappings", {}), f"destinations.{name}.mappings"
             ),
@@ -86,7 +88,9 @@ def save_state(path: str, state: dict) -> None:
     os.makedirs(directory, exist_ok=True)
     temp_path = None
     try:
-        fd, temp_path = tempfile.mkstemp(prefix=".sync_state.", suffix=".tmp", dir=directory)
+        fd, temp_path = tempfile.mkstemp(
+            prefix=".sync_state.", suffix=".tmp", dir=directory
+        )
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(state, handle, indent=2, sort_keys=True)
             handle.flush()

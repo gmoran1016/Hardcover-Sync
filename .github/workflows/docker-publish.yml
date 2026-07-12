@@ -14,7 +14,10 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pip check
+      - run: python -m ruff check .
+      - run: python -m ruff format --check .
       - run: python -m py_compile *.py
       - run: python -m unittest discover -v
       - run: docker build -t hardcover-sync:test .

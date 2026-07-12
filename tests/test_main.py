@@ -137,7 +137,9 @@ class MainTests(unittest.TestCase):
                 main.run_sync(self.config(path))
             state = load_state(path)
             self.assertIn("7", state["pending_finished"])
-            self.assertEqual(state["destinations"]["goodreads"]["books"]["7"], "finished")
+            self.assertEqual(
+                state["destinations"]["goodreads"]["books"]["7"], "finished"
+            )
 
     def test_missing_status_record_is_preserved_for_retry(self):
         with tempfile.TemporaryDirectory() as directory:
