@@ -16,7 +16,7 @@ from storygraph import COOKIES_FILE as STORYGRAPH_COOKIES, StorygraphSync
 from sync_result import SyncResult
 from sync_state import StateError, load_state, progress_signature, save_state
 
-VERSION = "2.0.5"
+VERSION = "2.0.6"
 
 logging.basicConfig(
     level=logging.INFO,

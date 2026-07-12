@@ -149,7 +149,7 @@ The first lines should appear immediately, before any network requests:
 ```text
 [hardcover-sync-entrypoint] container starting
 [hardcover-sync-entrypoint] virtual display is ready
-Hardcover Sync v2.0.5 starting
+Hardcover Sync v2.0.6 starting
 ```
 
 If those entrypoint lines do not appear, Unraid is running an old image or has
