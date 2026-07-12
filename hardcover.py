@@ -97,6 +97,8 @@ def _request(api_key: str, query: str, variables: dict | None = None) -> dict:
     except (requests.RequestException, ValueError) as exc:
         raise HardcoverAPIError(f"Hardcover request failed: {exc}") from exc
 
+    if not isinstance(payload, dict):
+        raise HardcoverAPIError("Hardcover did not return a JSON object")
     if payload.get("errors"):
         raise HardcoverAPIError(f"Hardcover GraphQL errors: {payload['errors']}")
     data = payload.get("data")
@@ -106,17 +108,42 @@ def _request(api_key: str, query: str, variables: dict | None = None) -> dict:
 
 
 def _author(book: dict) -> str:
-    contributions = book.get("contributions") or []
+    contributions = book.get("contributions")
+    if contributions is None:
+        contributions = []
+    if not isinstance(contributions, list) or any(
+        not isinstance(contribution, dict) for contribution in contributions
+    ):
+        raise HardcoverAPIError("Hardcover returned malformed book contributions")
     if not contributions:
         return "Unknown"
-    return ((contributions[0].get("author") or {}).get("name")) or "Unknown"
+    author = contributions[0].get("author")
+    if author is None:
+        author = {}
+    if not isinstance(author, dict):
+        raise HardcoverAPIError("Hardcover returned a malformed author object")
+    return author.get("name") or "Unknown"
 
 
 def _book_entry(user_book: dict) -> dict:
-    book = user_book.get("book") or {}
-    reads = user_book.get("user_book_reads") or []
+    if not isinstance(user_book, dict):
+        raise HardcoverAPIError("Hardcover returned a malformed book entry")
+    book = user_book.get("book")
+    if book is None:
+        book = {}
+    if not isinstance(book, dict):
+        raise HardcoverAPIError("Hardcover returned a malformed book object")
+    reads = user_book.get("user_book_reads")
+    if reads is None:
+        reads = []
+    if not isinstance(reads, list) or any(not isinstance(read, dict) for read in reads):
+        raise HardcoverAPIError("Hardcover returned malformed reading progress")
     latest = reads[0] if reads else {}
-    edition = latest.get("edition") or {}
+    edition = latest.get("edition")
+    if edition is None:
+        edition = {}
+    if not isinstance(edition, dict):
+        raise HardcoverAPIError("Hardcover returned a malformed edition object")
     user_book_id = user_book.get("id")
     if user_book_id is None or book.get("id") is None or not book.get("title"):
         raise HardcoverAPIError("Hardcover returned a book without stable IDs or title")
@@ -136,6 +163,8 @@ def _book_entry(user_book: dict) -> dict:
 def get_currently_reading(api_key: str) -> list[dict]:
     data = _request(api_key, CURRENT_QUERY)
     me = data["me"][0] if data["me"] else {}
+    if not isinstance(me, dict):
+        raise HardcoverAPIError("Hardcover returned a malformed account entry")
     user_books = me.get("user_books")
     if not isinstance(user_books, list):
         raise HardcoverAPIError("Hardcover response omitted user_books")
@@ -157,13 +186,21 @@ def get_book_statuses(api_key: str, ids: list[int]) -> dict[str, dict]:
         return {}
     data = _request(api_key, STATUS_QUERY, {"ids": ids})
     me = data["me"][0] if data["me"] else {}
+    if not isinstance(me, dict):
+        raise HardcoverAPIError("Hardcover returned a malformed account entry")
     user_books = me.get("user_books")
     if not isinstance(user_books, list):
         raise HardcoverAPIError("Hardcover status response omitted user_books")
 
     statuses = {}
     for user_book in user_books:
-        book = user_book.get("book") or {}
+        if not isinstance(user_book, dict):
+            raise HardcoverAPIError("Hardcover returned a malformed book entry")
+        book = user_book.get("book")
+        if book is None:
+            book = {}
+        if not isinstance(book, dict):
+            raise HardcoverAPIError("Hardcover returned a malformed book object")
         key = str(user_book.get("id"))
         statuses[key] = {
             "id": key,
