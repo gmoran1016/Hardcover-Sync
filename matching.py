@@ -29,13 +29,22 @@ def title_score(expected: str, candidate: str) -> float:
     return SequenceMatcher(None, left, right).ratio()
 
 
+def candidate_title(candidate_text: str) -> str:
+    """Return the first nonempty line from a destination search result."""
+    return next(
+        (line.strip() for line in candidate_text.splitlines() if line.strip()),
+        "",
+    )
+
+
 def result_score(title: str, author: str | None, candidate_text: str) -> float:
-    score = title_score(title, candidate_text)
+    title_component = title_score(title, candidate_title(candidate_text))
     author_norm = normalise(author or "")
     candidate_norm = normalise(candidate_text)
-    if author_norm and author_norm != "unknown":
-        score += 0.08 if author_norm in candidate_norm else -0.08
-    return max(0.0, min(score, 1.0))
+    if not author_norm or author_norm == "unknown":
+        return title_component
+    author_component = 1.0 if author_norm in candidate_norm else 0.0
+    return 0.92 * title_component + 0.08 * author_component
 
 
 def choose_match(
