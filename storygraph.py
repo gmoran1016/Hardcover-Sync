@@ -33,6 +33,16 @@ STORYGRAPH_URL = "https://app.thestorygraph.com"
 COOKIES_FILE = os.path.join(os.path.dirname(__file__), "cookies", "storygraph.json")
 
 
+def current_reading_status(driver) -> str | None:
+    """Return the normalized visible reading status on a StoryGraph book page."""
+    for label in driver.find_elements(By.CSS_SELECTOR, ".read-status-label"):
+        if label.is_displayed():
+            value = " ".join((label.text or "").casefold().split())
+            if value:
+                return value
+    return None
+
+
 class StorygraphSync:
     """Context-manager that owns a single browser session for StoryGraph."""
 
@@ -172,6 +182,10 @@ class StorygraphSync:
 
             self.driver.get(book_url)
             time.sleep(2)
+
+            if current_reading_status(self.driver) == "read":
+                logger.info("StoryGraph: '%s' is already marked as read", title)
+                return SyncResult.ok(book_url)
 
             # Dismiss banners
             for btn in self.driver.find_elements(
