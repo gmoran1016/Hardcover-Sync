@@ -24,6 +24,10 @@ class DriverTests(unittest.TestCase):
             arguments = options.arguments
             self.assertIn("--remote-debugging-port=0", arguments)
             self.assertIn("--disable-dev-shm-usage", arguments)
+            self.assertNotIn(
+                "useAutomationExtension",
+                options.experimental_options,
+            )
             self.assertTrue(
                 any(arg.startswith("--user-data-dir=") for arg in arguments)
             )

@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         chromium-driver \
         xvfb \
         xauth \
+        tini \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- working directory ----
@@ -35,5 +36,5 @@ ENV PYTHONUNBUFFERED=1 \
     CHROME_NO_SANDBOX=1 \
     DISPLAY=:99
 
-ENTRYPOINT ["python", "-u", "container_entrypoint.py"]
+ENTRYPOINT ["/usr/bin/tini", "-g", "-s", "--", "python", "-u", "container_entrypoint.py"]
 CMD ["python", "-u", "main.py"]

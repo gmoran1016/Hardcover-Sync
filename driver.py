@@ -56,7 +56,6 @@ def build_options() -> tuple[Options, bool, dict[str, str]]:
     # Reduce bot-detection signals
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
 
     chrome_bin = os.getenv("CHROME_BIN")
     if chrome_bin and os.path.exists(chrome_bin):
