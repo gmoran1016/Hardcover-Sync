@@ -10,7 +10,7 @@ Hardcover is always the source of truth — progress is never written back.
 
 1. Every N minutes the app queries the Hardcover GraphQL API for your **Currently Reading** books and their page progress.
 2. It compares that data with durable per-destination state, retaining failed updates for retry.
-3. For each changed book it opens a headless Chrome session, logs in to each configured destination, and updates the progress.
+3. For each changed book it opens an automated Chrome session, logs in to each configured destination, and updates the progress.
 4. Ambiguous search results are skipped instead of risking an update to the wrong book.
 
 > Goodreads and StoryGraph have no public API, so browser automation is the only available method.
@@ -100,7 +100,8 @@ The Docker image is automatically built and published to GitHub Container Regist
 **1. SSH into your Unraid server and create the appdata folder:**
 
 ```bash
-mkdir -p /mnt/user/appdata/hardcover-sync/cookies
+mkdir -p /mnt/user/appdata/hardcover-sync/cookies \
+  /mnt/user/appdata/hardcover-sync/state
 ```
 
 **2. Copy your cookies from your PC to Unraid:**
@@ -133,12 +134,14 @@ Add these **Environment Variables** (click "+ Add another Path, Port, Variable, 
 
 Add these **Volume mappings**:
 
-| Container path | Host path |
-|---|---|
-| `/app/cookies` | `/mnt/user/appdata/hardcover-sync/cookies` |
-| `/app/state` | `/mnt/user/appdata/hardcover-sync/state` |
+| Container path | Host path | Access mode |
+|---|---|---|
+| `/app/cookies` | `/mnt/user/appdata/hardcover-sync/cookies` | Read Only |
+| `/app/state` | `/mnt/user/appdata/hardcover-sync/state` | Read/Write |
 
-> The `/app/state` mapping is optional but recommended — it stores sync state so the app can skip unchanged books between restarts. Without it, a harmless warning appears in the logs and every sync will push progress regardless of whether it changed.
+> The `/app/state` mapping is required for durable operation. It preserves
+> destination mappings, pending finished books, and progress signatures when
+> Unraid replaces the container during an update.
 
 **4. Click Apply.**
 
@@ -149,7 +152,7 @@ The first lines should appear immediately, before any network requests:
 ```text
 [hardcover-sync-entrypoint] container starting
 [hardcover-sync-entrypoint] virtual display is ready
-Hardcover Sync v2.0.6 starting
+Hardcover Sync v2.0.7 starting
 ```
 
 If those entrypoint lines do not appear, Unraid is running an old image or has
@@ -258,6 +261,11 @@ writes ChromeDriver startup diagnostics to
 `/tmp/hardcover-sync-chromedriver.log` inside the container. If Chrome exits
 before Selenium can attach, inspect that file with
 `docker compose exec hardcover-sync tail -100 /tmp/hardcover-sync-chromedriver.log`.
+
+Version 2.0.7 supervises the virtual display and exits if Xvfb dies, allowing
+Docker's `unless-stopped` policy to restart a complete browser environment. It
+also removes stale display lock/socket files at startup and uses `tini` to reap
+orphaned Chromium processes.
 
 ### Percentages differ between platforms
 Different platforms may have your book in a different edition with a different page count. This is expected — the sync pushes the absolute page number, and each platform calculates its own percentage.
