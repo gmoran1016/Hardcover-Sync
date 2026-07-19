@@ -19,7 +19,7 @@ import time
 from urllib.parse import quote_plus
 
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import Select, WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
@@ -448,6 +448,48 @@ class StorygraphSync:
             )
         return result
 
+    @staticmethod
+    def _progress_request(
+        pages: int | None, pct: float | None
+    ) -> tuple[str, str] | None:
+        if pages is not None:
+            return "pages", str(pages)
+        if pct is not None:
+            return "percentage", str(max(0, min(100, round(pct))))
+        return None
+
+    def _visible_progress_form(self):
+        for progress_input in self.driver.find_elements(
+            By.CSS_SELECTOR, "input#read_status_progress_number"
+        ):
+            if progress_input.is_displayed():
+                form = progress_input.find_element(By.XPATH, "./ancestor::form[1]")
+                return form, progress_input
+        return None
+
+    def _progress_unit_ready(self, form, progress_input, unit_select, unit) -> bool:
+        if unit_select.get_attribute("value") != unit:
+            return False
+        if unit == "percentage":
+            return progress_input.get_attribute("max") == "100"
+        page_count = form.find_element(
+            By.CSS_SELECTOR, ".read-status-book-num-of-pages"
+        ).get_attribute("value")
+        return bool(page_count) and progress_input.get_attribute("max") == page_count
+
+    def _saved_progress_matches(self, unit: str, value: str) -> bool:
+        visible = self._visible_progress_form()
+        if visible is None:
+            return True
+        form, _progress_input = visible
+        selector = (
+            ".read-status-last-reached-pages"
+            if unit == "pages"
+            else ".read-status-last-reached-percent"
+        )
+        saved = form.find_element(By.CSS_SELECTOR, selector)
+        return saved.get_attribute("value") == value
+
     def _do_update_progress(
         self, pages: int | None, pct: float | None, total_pages: int | None
     ) -> bool:
@@ -510,25 +552,15 @@ class StorygraphSync:
             logger.debug("track-progress-button click result: %s", clicked)
             time.sleep(1)
 
-            value_to_set = None
-            if pages is not None:
-                value_to_set = str(pages)
-            elif pct is not None and total_pages:
-                value_to_set = str(int(total_pages * pct / 100))
-            else:
+            request = self._progress_request(pages, pct)
+            if request is None:
                 logger.warning("No pages or percent available for StoryGraph update")
                 return False
+            unit, value_to_set = request
 
-            # Wait for the progress input, then set value + fire events via JS so
-            # Stimulus/Rails UJS picks up the change regardless of visibility state.
             try:
-                wait.until(
-                    EC.presence_of_element_located(
-                        (
-                            By.CSS_SELECTOR,
-                            "input#read_status_progress_number",
-                        )
-                    )
+                form, progress_input = wait.until(
+                    lambda _driver: self._visible_progress_form()
                 )
             except TimeoutException:
                 logger.error(
@@ -536,53 +568,57 @@ class StorygraphSync:
                 )
                 return False
 
-            result = self.driver.execute_script(
-                """
-                var inputs = document.querySelectorAll('input#read_status_progress_number');
-                var inp = null;
-                for (var i of inputs) {
-                    if (i.offsetParent !== null) { inp = i; break; }
-                }
-                if (!inp && inputs.length > 0) inp = inputs[0];
-                if (!inp) return 'no input';
-                inp.focus();
-                inp.value = arguments[0];
-                inp.dispatchEvent(new Event('input', {bubbles: true}));
-                inp.dispatchEvent(new Event('change', {bubbles: true}));
-                return 'set:' + inp.value;
-            """,
-                value_to_set,
+            unit_select = form.find_element(
+                By.CSS_SELECTOR, "select#read_status_progress_type"
             )
-            logger.debug("Progress input JS result: %s", result)
-            if not result or not result.startswith("set:"):
-                logger.error("Could not set progress input value: %s", result)
-                return False
-
-            # Click the Save button via JS
-            save_result = self.driver.execute_script("""
-                var btns = document.querySelectorAll('input.progress-tracker-update-button');
-                for (var b of btns) {
-                    if (b.offsetParent !== null) { b.click(); return 'visible'; }
-                }
-                if (btns.length > 0) { btns[0].click(); return 'hidden'; }
-                return 'none';
-            """)
-            logger.debug("Save button JS result: %s", save_result)
-            if save_result == "none":
-                logger.error("Save button not found after filling progress")
-                return False
+            Select(unit_select).select_by_value(unit)
             wait.until(
-                EC.invisibility_of_element_located(
-                    (
-                        By.CSS_SELECTOR,
-                        "input#read_status_progress_number",
-                    )
+                lambda _driver: self._progress_unit_ready(
+                    form, progress_input, unit_select, unit
                 )
             )
 
+            progress_input.clear()
+            progress_input.send_keys(value_to_set)
+
+            input_valid = self.driver.execute_script(
+                "return arguments[0].checkValidity();", progress_input
+            )
+            form_valid = self.driver.execute_script(
+                "return arguments[0].checkValidity();", form
+            )
+            if not input_valid or not form_valid:
+                message = self.driver.execute_script(
+                    "return arguments[0].validationMessage;", progress_input
+                )
+                logger.error(
+                    "StoryGraph rejected %s progress value %s: %s",
+                    unit,
+                    value_to_set,
+                    message or "form validation failed",
+                )
+                return False
+
+            save_button = form.find_element(
+                By.CSS_SELECTOR, "input.progress-tracker-update-button"
+            )
+            save_button.click()
+            try:
+                wait.until(
+                    lambda _driver: self._saved_progress_matches(unit, value_to_set)
+                )
+            except TimeoutException:
+                logger.error(
+                    "StoryGraph did not confirm saved %s progress value %s",
+                    unit,
+                    value_to_set,
+                )
+                return False
+
             logger.info(
-                "StoryGraph progress saved: %s pages",
-                pages if pages is not None else f"~{int(total_pages * pct / 100)}",
+                "StoryGraph progress saved: %s %s",
+                value_to_set,
+                unit,
             )
             return True
 
