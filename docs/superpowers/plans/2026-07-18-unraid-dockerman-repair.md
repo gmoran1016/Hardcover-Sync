@@ -70,7 +70,7 @@ Copy both template XML files into the repair directory, write `docker inspect ha
 
 - [ ] **Step 1: Generate a candidate XML in the repair directory**
 
-Use Python `xml.etree.ElementTree` to parse the backed-up canonical XML. Set `Name`, `Repository`, `Network`, and `ExtraParams` to the approved values. Remove all existing `Config` nodes, then append environment Config nodes derived from `.Config.Env` and the two approved Path nodes. Preserve values only in the file; print only node names and path targets.
+Use Python `xml.etree.ElementTree` to parse the backed-up canonical XML. Set `Name`, `Repository`, `Network`, and `ExtraParams` to the approved values. Preserve the template's declared Variable `Config` nodes, refresh each value from the matching key in `.Config.Env`, replace existing Path nodes with the two approved Path nodes, and reject any template variable that is absent from the running container. Do not import image-internal environment keys such as `PATH` or `LANG`. Preserve values only in the file; print only node names and path targets.
 
 - [ ] **Step 2: Validate the candidate without activating it**
 
@@ -85,7 +85,7 @@ assert cookie_path == ('/mnt/disk7/appdata/hardcover-sync/cookies', '/app/cookie
 assert state_path == ('/mnt/disk7/appdata/hardcover-sync/state', '/app/state', 'rw')
 ```
 
-Expected: PASS, and every environment key currently present in the inspect JSON appears exactly once.
+Expected: PASS, and every Variable target declared by the original canonical template appears exactly once with the current container value.
 
 - [ ] **Step 3: Activate the canonical template**
 
