@@ -252,6 +252,11 @@ The matcher requires a confident title/author result. Ambiguous results are
 deliberately skipped and retried later rather than defaulting to the first
 search result. Confirmed destination URLs are persisted in the state volume.
 
+### StoryGraph remembers percentage mode
+Version 2.0.8 explicitly switches StoryGraph's progress editor to pages before
+submitting page-based Hardcover progress. This avoids browser validation errors
+when StoryGraph remembers percentage mode from a previous update.
+
 ### Docker: Chrome crashes
 Keep `shm_size: "256mb"` in your compose file (or `--shm-size=256m` in
 Unraid). Chrome needs more shared memory than Docker's 64 MB default. The
