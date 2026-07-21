@@ -19,6 +19,7 @@ state/
 # Debug screenshots
 debug_*.png
 *.png
+!assets/hardcover-sync-icon.png
 
 # OS
 .DS_Store
