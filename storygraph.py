@@ -578,6 +578,27 @@ class StorygraphSync:
                 )
             )
 
+            if unit == "pages" and pages is not None and pct is not None:
+                try:
+                    page_limit = int(progress_input.get_attribute("max"))
+                except (TypeError, ValueError):
+                    page_limit = None
+                if page_limit is not None and pages > page_limit:
+                    logger.warning(
+                        "StoryGraph edition allows %s pages, but source progress is "
+                        "%s; falling back to %.0f%% progress",
+                        page_limit,
+                        pages,
+                        pct,
+                    )
+                    unit, value_to_set = self._progress_request(None, pct)
+                    Select(unit_select).select_by_value(unit)
+                    wait.until(
+                        lambda _driver: self._progress_unit_ready(
+                            form, progress_input, unit_select, unit
+                        )
+                    )
+
             progress_input.clear()
             progress_input.send_keys(value_to_set)
 

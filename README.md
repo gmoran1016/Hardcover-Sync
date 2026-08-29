@@ -15,7 +15,7 @@ Hardcover is always the source of truth — progress is never written back.
 
 > Goodreads and StoryGraph have no public API, so browser automation is the only available method.
 
-> **Note on percentages:** Hardcover, Goodreads, and StoryGraph may show different completion percentages for the same page number if they have different editions of the book with different page counts. This is expected — the sync always pushes the absolute page number.
+> **Note on percentages:** Hardcover, Goodreads, and StoryGraph may show different completion percentages for the same page number if they have different editions of the book with different page counts. The sync prefers the absolute page number, but StoryGraph falls back to the Hardcover percentage when that page number exceeds the matched edition's maximum.
 
 ---
 
@@ -255,7 +255,9 @@ search result. Confirmed destination URLs are persisted in the state volume.
 ### StoryGraph remembers percentage mode
 Version 2.0.8 explicitly switches StoryGraph's progress editor to pages before
 submitting page-based Hardcover progress. This avoids browser validation errors
-when StoryGraph remembers percentage mode from a previous update.
+when StoryGraph remembers percentage mode from a previous update. If the matched
+StoryGraph edition is shorter than the Hardcover source edition, the sync instead
+submits the source percentage when the absolute page value would be invalid.
 
 ### Docker: Chrome crashes
 Keep `shm_size: "256mb"` in your compose file (or `--shm-size=256m` in
@@ -273,7 +275,7 @@ also removes stale display lock/socket files at startup and uses `tini` to reap
 orphaned Chromium processes.
 
 ### Percentages differ between platforms
-Different platforms may have your book in a different edition with a different page count. This is expected — the sync pushes the absolute page number, and each platform calculates its own percentage.
+Different platforms may have your book in a different edition with a different page count. This is expected — the sync pushes the absolute page number when it fits, and StoryGraph falls back to the source percentage when it does not.
 
 ### "Could not save sync state: Permission denied"
 The `/app/state` directory isn't writable. If using Docker Compose, make sure the `sync-state` named volume is defined (see `docker-compose.yml`). If using Unraid's Docker UI, add a path mapping for `/app/state` → `/mnt/user/appdata/hardcover-sync/state` and create that folder first with `mkdir -p /mnt/user/appdata/hardcover-sync/state`.

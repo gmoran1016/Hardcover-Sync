@@ -166,7 +166,14 @@ class FakeProgressDriver:
 
     def execute_script(self, script, *arguments):
         if "checkValidity" in script:
-            return arguments[0].valid
+            control = arguments[0]
+            if control is getattr(getattr(control, "form", None), "number", None):
+                if control.form.unit.value == "pages":
+                    try:
+                        return control.valid and int(control.value) <= int(control.max)
+                    except (TypeError, ValueError):
+                        return False
+            return control.valid
         if "validationMessage" in script:
             return arguments[0].validation_message
         if arguments:
@@ -263,6 +270,19 @@ class StorygraphTests(unittest.TestCase):
         self.assertEqual(form.unit.selected_units, ["percentage"])
         self.assertEqual(form.number.value, "12")
         self.assertEqual(form.last_percent.value, "12")
+
+    def test_update_progress_falls_back_to_percentage_when_source_exceeds_edition_max(
+        self,
+    ):
+        form = FakeProgressForm(True)
+        result, _hidden = self.run_progress(form, pages=687, pct=97.6)
+        self.assertTrue(result)
+        self.assertEqual(form.unit.selected_units, ["pages", "percentage"])
+        self.assertEqual(form.unit.value, "percentage")
+        self.assertEqual(form.number.value, "98")
+        self.assertEqual(form.number.max, "100")
+        self.assertEqual(form.last_percent.value, "98")
+        self.assertEqual(form.save.clicks, 1)
 
     def test_update_progress_uses_controls_from_visible_form(self):
         form = FakeProgressForm(True)
