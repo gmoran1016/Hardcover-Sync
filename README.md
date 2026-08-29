@@ -253,7 +253,7 @@ deliberately skipped and retried later rather than defaulting to the first
 search result. Confirmed destination URLs are persisted in the state volume.
 
 ### StoryGraph remembers percentage mode
-Version 2.0.8 explicitly switches StoryGraph's progress editor to pages before
+Version 2.0.9 explicitly switches StoryGraph's progress editor to pages before
 submitting page-based Hardcover progress. This avoids browser validation errors
 when StoryGraph remembers percentage mode from a previous update. If the matched
 StoryGraph edition is shorter than the Hardcover source edition, the sync instead
