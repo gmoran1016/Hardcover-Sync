@@ -33,6 +33,45 @@ class MatchingTests(unittest.TestCase):
             "Crossroads of Twilight (The Wheel of Time, #10)",
         )
 
+    def test_choose_match_handles_storygraph_series_before_title(self):
+        candidates = [
+            (
+                "The Wheel of Time #11\nKnife of Dreams\nRobert Jordan",
+                "https://app.thestorygraph.com/books/knife-of-dreams",
+            )
+        ]
+        self.assertEqual(
+            choose_match("Knife of Dreams", "Robert Jordan", candidates),
+            "https://app.thestorygraph.com/books/knife-of-dreams",
+        )
+
+    def test_choose_match_collapses_equivalent_result_duplicates(self):
+        candidates = [
+            (
+                "The Wheel of Time #11\nKnife of Dreams\nRobert Jordan",
+                "https://app.thestorygraph.com/books/first",
+            ),
+            (
+                "The Wheel Of Time #11\nKnife of Dreams\nRobert Jordan",
+                "https://app.thestorygraph.com/books/second",
+            ),
+            (
+                "Knife of Dreams: Book Eleven 11 of The Wheel of Time\nRobert Jordan",
+                "https://app.thestorygraph.com/books/third",
+            ),
+        ]
+        self.assertEqual(
+            choose_match("Knife of Dreams", "Robert Jordan", candidates),
+            "https://app.thestorygraph.com/books/first",
+        )
+
+    def test_choose_match_rejects_different_near_ties(self):
+        candidates = [
+            ("Dune\nFrank Herbert", "https://app.thestorygraph.com/books/first"),
+            ("Dune 1\nFrank Herbert", "https://app.thestorygraph.com/books/second"),
+        ]
+        self.assertIsNone(choose_match("Dune", "Frank Herbert", candidates))
+
     def test_choose_match_selects_canonical_goodreads_work(self):
         candidates = [
             (

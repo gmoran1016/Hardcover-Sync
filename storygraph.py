@@ -278,29 +278,25 @@ class StorygraphSync:
 
         try:
             wait = WebDriverWait(self.driver, 10)
-            # StoryGraph search result containers
-            results = wait.until(
-                EC.presence_of_all_elements_located(
-                    (
-                        By.CSS_SELECTOR,
-                        ".book-title-author-and-series, h3.font-semibold, .book-title",
-                    )
-                )
-            )
 
-            candidates = []
-            for result in results[:5]:
-                href = self._extract_href(result)
-                if href:
-                    candidates.append((result.text, href))
-            match = choose_match(title, author, candidates)
-            if match:
-                logger.debug("Matched StoryGraph result for '%s': %s", title, match)
-                return match
-            logger.warning("No unambiguous StoryGraph match for '%s'", title)
+            def find_match(driver):
+                results = driver.find_elements(
+                    By.CSS_SELECTOR,
+                    ".book-title-author-and-series, h3.font-semibold, .book-title",
+                )
+                candidates = []
+                for result in results:
+                    href = self._extract_href(result)
+                    if href:
+                        candidates.append((result.text, href))
+                return choose_match(title, author, candidates) or False
+
+            match = wait.until(find_match)
+            logger.debug("Matched StoryGraph result for '%s': %s", title, match)
+            return match
 
         except TimeoutException:
-            logger.error("Timeout searching StoryGraph for '%s'", title)
+            logger.warning("No unambiguous StoryGraph match for '%s'", title)
 
         return None
 

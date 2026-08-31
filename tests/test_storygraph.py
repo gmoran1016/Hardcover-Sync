@@ -200,6 +200,48 @@ class ImmediateWait:
         return result
 
 
+class FakeSearchResult(FakeElement):
+    def __init__(self, text, href):
+        super().__init__(text)
+        self.href = href
+
+
+class FakeSearchDriver:
+    def __init__(self, snapshots):
+        self.snapshots = snapshots
+        self.current_url = ""
+        self.search_polls = 0
+
+    def get(self, url):
+        self.current_url = url
+
+    def find_elements(self, by, selector):
+        self.assert_search_selector(by, selector)
+        index = min(self.search_polls, len(self.snapshots) - 1)
+        self.search_polls += 1
+        return self.snapshots[index]
+
+    @staticmethod
+    def assert_search_selector(by, selector):
+        if (by, selector) != (
+            By.CSS_SELECTOR,
+            ".book-title-author-and-series, h3.font-semibold, .book-title",
+        ):
+            raise AssertionError((by, selector))
+
+
+class TwoPollWait:
+    def __init__(self, driver, _timeout):
+        self.driver = driver
+
+    def until(self, condition):
+        for _ in range(2):
+            result = condition(self.driver)
+            if result:
+                return result
+        raise TimeoutException()
+
+
 class StorygraphTests(unittest.TestCase):
     def run_finish(self, driver):
         sync = StorygraphSync("", "")
@@ -237,6 +279,38 @@ class StorygraphTests(unittest.TestCase):
         driver = FakeDriver("currently reading", [])
         result = self.run_finish(driver)
         self.assertFalse(result.success)
+
+    def test_search_waits_for_late_unambiguous_result(self):
+        exact_url = "https://app.thestorygraph.com/books/knife-of-dreams"
+        driver = FakeSearchDriver(
+            [
+                [
+                    FakeSearchResult(
+                        "An Unrelated Book\nA Different Author",
+                        "https://app.thestorygraph.com/books/unrelated",
+                    )
+                ],
+                [
+                    FakeSearchResult(
+                        "An Unrelated Book\nA Different Author",
+                        "https://app.thestorygraph.com/books/unrelated",
+                    ),
+                    FakeSearchResult(
+                        "The Wheel of Time #11\nKnife of Dreams\nRobert Jordan",
+                        exact_url,
+                    ),
+                ],
+            ]
+        )
+        sync = StorygraphSync("", "")
+        sync.driver = driver
+        with (
+            patch.object(storygraph, "WebDriverWait", TwoPollWait),
+            patch.object(sync, "_extract_href", side_effect=lambda result: result.href),
+        ):
+            result = sync._search_book("Knife of Dreams", "Robert Jordan")
+        self.assertEqual(result, exact_url)
+        self.assertEqual(driver.search_polls, 2)
 
     def run_progress(self, form, pages=103, pct=12.4):
         hidden = FakeProgressForm(False)
