@@ -33,6 +33,7 @@ ENV PYTHONUNBUFFERED=1 \
     CHROME_BIN=/usr/bin/chromium \
     CHROMEDRIVER_PATH=/usr/bin/chromedriver \
     CHROME_HEADLESS=0 \
+    CHROME_NO_SANDBOX=1 \
     DISPLAY=:99
 
 ENTRYPOINT ["/usr/bin/tini", "-g", "-s", "--", "python", "-u", "container_entrypoint.py"]
