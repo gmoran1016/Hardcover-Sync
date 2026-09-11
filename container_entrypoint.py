@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import time
 
 DISPLAY = os.getenv("DISPLAY", ":99")
+XAUTH_FILE = Path(os.getenv("XAUTH_FILE", "/tmp/hardcover-sync.xauth"))
 
 
 def log(message: str) -> None:
@@ -66,6 +68,15 @@ def stop_process(process: subprocess.Popen, timeout: float = 10.0) -> None:
 
 def start_xvfb() -> subprocess.Popen:
     clear_display_artifacts(DISPLAY)
+    # Restrict the local X socket with a per-container cookie.  TCP listening is
+    # disabled as well, so the browser never exposes a host-reachable display.
+    cookie = os.urandom(16).hex()
+    subprocess.run(
+        ["xauth", "-f", str(XAUTH_FILE), "add", DISPLAY, ".", cookie],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
     command = [
         "Xvfb",
         DISPLAY,
@@ -74,7 +85,8 @@ def start_xvfb() -> subprocess.Popen:
         "1920x1080x24",
         "-nolisten",
         "tcp",
-        "-ac",
+        "-auth",
+        str(XAUTH_FILE),
     ]
     log(f"starting virtual display {DISPLAY}")
     process = subprocess.Popen(command)
@@ -107,9 +119,14 @@ def main() -> None:
     command = sys.argv[1:] or ["python", "-u", "main.py"]
     log(f"container starting; command: {' '.join(command)}")
     os.environ["DISPLAY"] = DISPLAY
+    os.environ["XAUTHORITY"] = str(XAUTH_FILE)
     try:
         xvfb = start_xvfb()
     except Exception as exc:
+        try:
+            XAUTH_FILE.unlink()
+        except FileNotFoundError:
+            pass
         log(f"fatal display startup error: {exc}")
         raise SystemExit(1) from exc
     log("virtual display is ready")
@@ -118,13 +135,37 @@ def main() -> None:
         application = subprocess.Popen(command)
     except Exception as exc:
         stop_process(xvfb)
+        try:
+            XAUTH_FILE.unlink()
+        except FileNotFoundError:
+            pass
         log(f"fatal application startup error: {exc}")
         raise SystemExit(1) from exc
+    stopping = False
+
+    def _stop(_signal, _frame):
+        nonlocal stopping
+        if stopping:
+            return
+        stopping = True
+        log("shutdown signal received; stopping application")
+        stop_process(application, timeout=120)
+        stop_process(xvfb, timeout=20)
+
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
     try:
         status = supervise(xvfb, application)
     except RuntimeError as exc:
         log(f"fatal runtime error: {exc}")
         raise SystemExit(1) from exc
+    finally:
+        try:
+            XAUTH_FILE.unlink()
+        except FileNotFoundError:
+            pass
+    if stopping:
+        status = 0
     raise SystemExit(status)
 
 

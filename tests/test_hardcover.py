@@ -3,7 +3,12 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from hardcover import HardcoverAPIError, get_book_statuses, get_currently_reading
+from hardcover import (
+    HardcoverAPIError,
+    HardcoverDeferredError,
+    get_book_statuses,
+    get_currently_reading,
+)
 
 
 class HardcoverTests(unittest.TestCase):
@@ -31,6 +36,27 @@ class HardcoverTests(unittest.TestCase):
         with self.response_with(payload):
             with self.assertRaisesRegex(HardcoverAPIError, "book object"):
                 get_currently_reading("token")
+
+    def test_current_book_requires_stable_ids_title_and_author_types(self):
+        malformed = (
+            {"id": "1", "book": {"id": 2, "title": "Dune"}},
+            {"id": 1, "book": {"id": True, "title": "Dune"}},
+            {"id": 1, "book": {"id": 2, "title": 123}},
+            {
+                "id": 1,
+                "book": {
+                    "id": 2,
+                    "title": "Dune",
+                    "contributions": [{"author": {"name": 123}}],
+                },
+            },
+        )
+        for user_book in malformed:
+            with self.subTest(user_book=user_book):
+                payload = {"data": {"me": [{"user_books": [user_book]}]}}
+                with self.response_with(payload):
+                    with self.assertRaises(HardcoverAPIError):
+                        get_currently_reading("token")
 
     def test_malformed_reading_progress_raises_controlled_error(self):
         payload = {
@@ -152,6 +178,17 @@ class HardcoverTests(unittest.TestCase):
         with patch("hardcover._session", return_value=session):
             with self.assertRaises(HardcoverAPIError):
                 get_currently_reading("token")
+
+    def test_rate_limit_becomes_deferred_cooldown_without_sleeping(self):
+        response = Mock(status_code=429)
+        response.headers = {"Retry-After": "86400"}
+        session = Mock()
+        session.post.return_value = response
+        with patch("hardcover._session", return_value=session):
+            with self.assertRaises(HardcoverDeferredError) as deferred:
+                get_currently_reading("token")
+        self.assertEqual(deferred.exception.retry_after_seconds, 86400)
+        session.post.assert_called_once()
 
     def test_graphql_error_raises(self):
         response = Mock()

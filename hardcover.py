@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import math
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -14,6 +17,16 @@ GRAPHQL_URL = "https://api.hardcover.app/v1/graphql"
 
 class HardcoverAPIError(RuntimeError):
     """Raised when Hardcover cannot provide a trustworthy response."""
+
+
+class HardcoverDeferredError(HardcoverAPIError):
+    """Raised for a rate-limit response that should be retried later."""
+
+    def __init__(self, message: str, retry_after_seconds: float = 60.0):
+        super().__init__(message)
+        # Preserve the provider's requested cooldown as state; never sleep for
+        # it inside the HTTP request itself.
+        self.retry_after_seconds = max(1.0, float(retry_after_seconds))
 
 
 CURRENT_QUERY = """
@@ -31,6 +44,7 @@ query GetCurrentlyReading {
         }
       }
       user_book_reads(order_by: {id: desc}, limit: 1) {
+        id
         progress
         progress_pages
         edition {
@@ -57,6 +71,7 @@ query GetBookStatuses($ids: [Int!]!) {
           author { name }
         }
       }
+      user_book_reads(order_by: {id: desc}, limit: 1) { id edition { id pages } }
     }
   }
 }
@@ -68,11 +83,12 @@ def _session() -> requests.Session:
         total=3,
         connect=3,
         read=3,
-        status=3,
-        backoff_factor=1,
-        status_forcelist=(429, 500, 502, 503, 504),
+        status=0,
+        backoff_factor=0.2,
+        backoff_max=30,
+        status_forcelist=(),
         allowed_methods=frozenset({"POST"}),
-        respect_retry_after_header=True,
+        respect_retry_after_header=False,
     )
     session = requests.Session()
     session.mount("https://", HTTPAdapter(max_retries=retry))
@@ -92,6 +108,26 @@ def _request(api_key: str, query: str, variables: dict | None = None) -> dict:
             headers=headers,
             timeout=(10, 30),
         )
+        if response.status_code in (429, 503):
+            retry_after = response.headers.get("Retry-After")
+            delay = 60.0
+            if retry_after:
+                try:
+                    delay = float(retry_after)
+                except (TypeError, ValueError):
+                    try:
+                        when = parsedate_to_datetime(retry_after)
+                        if when.tzinfo is None:
+                            when = when.replace(tzinfo=timezone.utc)
+                        delay = max(
+                            1.0, (when - datetime.now(timezone.utc)).total_seconds()
+                        )
+                    except (TypeError, ValueError, OverflowError):
+                        delay = 60.0
+            raise HardcoverDeferredError(
+                f"Hardcover deferred the request with HTTP {response.status_code}",
+                delay,
+            )
         response.raise_for_status()
         payload = response.json()
     except (requests.RequestException, ValueError) as exc:
@@ -122,7 +158,34 @@ def _author(book: dict) -> str:
         author = {}
     if not isinstance(author, dict):
         raise HardcoverAPIError("Hardcover returned a malformed author object")
-    return author.get("name") or "Unknown"
+    name = author.get("name")
+    if name is None:
+        return "Unknown"
+    if not isinstance(name, str) or not name.strip():
+        raise HardcoverAPIError("Hardcover returned a malformed author name")
+    return name.strip()
+
+
+def _number(value, field: str, *, maximum: float | None = None):
+    if value is None:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+    ):
+        raise HardcoverAPIError(f"Hardcover returned an invalid {field}")
+    if value < 0 or (maximum is not None and value > maximum):
+        raise HardcoverAPIError(f"Hardcover returned an invalid {field}")
+    return value
+
+
+def _identifier(value, field: str, *, required: bool = True):
+    if value is None and not required:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise HardcoverAPIError(f"Hardcover returned an invalid {field}")
+    return value
 
 
 def _book_entry(user_book: dict) -> dict:
@@ -144,19 +207,31 @@ def _book_entry(user_book: dict) -> dict:
         edition = {}
     if not isinstance(edition, dict):
         raise HardcoverAPIError("Hardcover returned a malformed edition object")
-    user_book_id = user_book.get("id")
-    if user_book_id is None or book.get("id") is None or not book.get("title"):
+    user_book_id = _identifier(user_book.get("id"), "user book id")
+    book_id = _identifier(book.get("id"), "book id")
+    title = book.get("title")
+    if not isinstance(title, str) or not title.strip():
         raise HardcoverAPIError("Hardcover returned a book without stable IDs or title")
+    status_id = _identifier(user_book.get("status_id"), "status id", required=False)
+    read_id = _identifier(latest.get("id"), "read id", required=False)
+    edition_id = _identifier(edition.get("id"), "edition id", required=False)
+    total_pages = _number(edition.get("pages") or book.get("pages"), "total page count")
+    progress_pages = _number(latest.get("progress_pages"), "progress page count")
+    progress_percent = _number(
+        latest.get("progress"), "progress percentage", maximum=100
+    )
     return {
         "id": str(user_book_id),
         "user_book_id": user_book_id,
-        "book_id": book["id"],
-        "edition_id": edition.get("id"),
-        "title": book["title"],
+        "book_id": book_id,
+        "edition_id": edition_id,
+        "read_id": read_id,
+        "status_id": status_id,
+        "title": title.strip(),
         "author": _author(book),
-        "total_pages": edition.get("pages") or book.get("pages"),
-        "progress_pages": latest.get("progress_pages"),
-        "progress_percent": latest.get("progress"),
+        "total_pages": total_pages,
+        "progress_pages": progress_pages,
+        "progress_percent": progress_percent,
     }
 
 
@@ -169,6 +244,8 @@ def get_currently_reading(api_key: str) -> list[dict]:
     if not isinstance(user_books, list):
         raise HardcoverAPIError("Hardcover response omitted user_books")
     books = [_book_entry(item) for item in user_books]
+    if len({entry["id"] for entry in books}) != len(books):
+        raise HardcoverAPIError("Hardcover returned duplicate user book ids")
     for entry in books:
         logger.info(
             "Hardcover: '%s' by %s — %s/%s pages (%.1f%%)",
@@ -204,23 +281,45 @@ def get_book_statuses(api_key: str, ids: list[int]) -> dict[str, dict]:
         user_book_id = user_book.get("id")
         book_id = book.get("id")
         title = book.get("title")
-        if (
-            user_book_id is None
-            or book_id is None
-            or not isinstance(title, str)
-            or not title.strip()
-        ):
+        try:
+            user_book_id = _identifier(user_book_id, "user book id")
+            book_id = _identifier(book_id, "book id")
+        except HardcoverAPIError as exc:
+            raise HardcoverAPIError(
+                "Hardcover returned a book without stable IDs or title"
+            ) from exc
+        if not isinstance(title, str) or not title.strip():
             raise HardcoverAPIError(
                 "Hardcover returned a book without stable IDs or title"
             )
         key = str(user_book_id)
+        if key in statuses:
+            raise HardcoverAPIError("Hardcover returned duplicate status records")
+        status_id = user_book.get("status_id")
+        status_id = _identifier(status_id, "status id", required=False)
+        reads = user_book.get("user_book_reads") or []
+        if not isinstance(reads, list) or any(
+            not isinstance(read, dict) for read in reads
+        ):
+            raise HardcoverAPIError("Hardcover returned malformed reading progress")
+        latest = reads[0] if reads else {}
+        edition = latest.get("edition") or {}
+        if not isinstance(edition, dict):
+            raise HardcoverAPIError("Hardcover returned a malformed edition object")
+        read_id = _identifier(latest.get("id"), "read id", required=False)
+        edition_id = _identifier(edition.get("id"), "edition id", required=False)
+        total_pages = _number(
+            edition.get("pages") or book.get("pages"), "total page count"
+        )
         statuses[key] = {
             "id": key,
             "user_book_id": user_book_id,
             "book_id": book_id,
-            "title": title,
+            "title": title.strip(),
             "author": _author(book),
-            "total_pages": book.get("pages"),
-            "status_id": user_book.get("status_id"),
+            "total_pages": total_pages,
+            "status_id": status_id,
+            "read_id": read_id,
+            "edition_id": edition_id,
         }
     return statuses

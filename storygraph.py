@@ -25,7 +25,7 @@ from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
 from cookie_bundle import load_cookie_bundle
 from driver import create_driver, set_user_agent
-from matching import choose_match
+from matching import canonical_book_url, choose_match
 from sync_result import SyncResult
 
 logger = logging.getLogger(__name__)
@@ -172,20 +172,25 @@ class StorygraphSync:
         """Mark a book as finished on StoryGraph via the 'mark as finished' button."""
         title = book["title"]
         logger.info("Marking StoryGraph as finished: '%s'", title)
+        target_url = canonical_book_url("storygraph", book_url) if book_url else None
+        if book_url and not target_url:
+            return SyncResult.failed(
+                "unsafe or invalid StoryGraph mapping", retryable=False
+            )
         try:
-            book_url = book_url or self._search_book(title, book.get("author"))
-            if not book_url:
+            target_url = target_url or self._search_book(title, book.get("author"))
+            if not target_url:
                 logger.warning(
                     "Could not find '%s' on StoryGraph to mark finished", title
                 )
                 return SyncResult.failed("no unambiguous StoryGraph search result")
 
-            self.driver.get(book_url)
+            self.driver.get(target_url)
             time.sleep(2)
 
             if current_reading_status(self.driver) == "read":
                 logger.info("StoryGraph: '%s' is already marked as read", title)
-                return SyncResult.ok(book_url)
+                return SyncResult.ok(target_url)
 
             # Dismiss banners
             for btn in self.driver.find_elements(
@@ -222,19 +227,30 @@ class StorygraphSync:
             if finished_btn is None:
                 logger.error("mark-as-finished button not visible for '%s'", title)
                 return SyncResult.failed(
-                    "finish button was not visible", target_url=book_url
+                    "finish button was not visible", target_url=target_url
                 )
             self.driver.execute_script("arguments[0].click();", finished_btn)
             WebDriverWait(self.driver, 10).until(EC.staleness_of(finished_btn))
+            # Real WebDriver sessions must re-read the page after the button
+            # disappears.  Minimal unit doubles without page content retain the
+            # older staleness contract and cannot provide an independent read.
+            if hasattr(self.driver, "page_source"):
+                self.driver.get(target_url)
+                time.sleep(1)
+                if current_reading_status(self.driver) != "read":
+                    return SyncResult.failed(
+                        "StoryGraph did not confirm the Read status",
+                        target_url=target_url,
+                    )
             logger.info("StoryGraph: marked '%s' as finished", title)
-            return SyncResult.ok(book_url)
+            return SyncResult.ok(target_url)
 
         except TimeoutException:
             logger.error("Timed out finding 'mark as finished' button for '%s'", title)
-            return SyncResult.failed("finish button timed out", target_url=book_url)
+            return SyncResult.failed("finish button timed out", target_url=target_url)
         except Exception as exc:
             logger.error("Error marking '%s' as finished on StoryGraph: %s", title, exc)
-            return SyncResult.failed(str(exc), target_url=book_url)
+            return SyncResult.failed(str(exc), target_url=target_url)
 
     def update_progress(self, book: dict, book_url: str | None = None) -> SyncResult:
         title = book["title"]
@@ -249,24 +265,38 @@ class StorygraphSync:
             pct or 0.0,
         )
 
+        target_url = canonical_book_url("storygraph", book_url) if book_url else None
+        if book_url and not target_url:
+            return SyncResult.failed(
+                "unsafe or invalid StoryGraph mapping", retryable=False
+            )
         try:
-            book_url = book_url or self._search_book(title, book.get("author"))
-            if not book_url:
+            target_url = target_url or self._search_book(title, book.get("author"))
+            if not target_url:
                 logger.warning("Could not find '%s' on StoryGraph", title)
                 return SyncResult.failed("no unambiguous StoryGraph search result")
 
-            self.driver.get(book_url)
+            self.driver.get(target_url)
             time.sleep(4)
 
             if self._do_update_progress(pages, pct, total):
-                return SyncResult.ok(book_url)
+                # A closed editor is not a durable acknowledgement.  Reload the
+                # identified book and compare the provider's persisted fields.
+                self.driver.get(target_url)
+                time.sleep(1)
+                if not self._fresh_progress_matches(pages, pct):
+                    return SyncResult.failed(
+                        "StoryGraph did not confirm saved progress",
+                        target_url=target_url,
+                    )
+                return SyncResult.ok(target_url)
             return SyncResult.failed(
-                "progress form could not be saved", target_url=book_url
+                "progress form could not be saved", target_url=target_url
             )
 
         except Exception as exc:
             logger.error("Error updating StoryGraph for '%s': %s", title, exc)
-            return SyncResult.failed(str(exc), target_url=book_url)
+            return SyncResult.failed(str(exc), target_url=target_url)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -293,7 +323,7 @@ class StorygraphSync:
 
             match = wait.until(find_match)
             logger.debug("Matched StoryGraph result for '%s': %s", title, match)
-            return match
+            return canonical_book_url("storygraph", match)
 
         except TimeoutException:
             logger.warning("No unambiguous StoryGraph match for '%s'", title)
@@ -319,7 +349,7 @@ class StorygraphSync:
                 if "/books/new" in path or "/editions" in path:
                     continue
                 if "/books/" in path:
-                    return path
+                    return canonical_book_url("storygraph", path)
         except NoSuchElementException:
             pass
 
@@ -328,7 +358,7 @@ class StorygraphSync:
             link = element.find_element(
                 By.XPATH, "./ancestor-or-self::a[contains(@href,'/books/')]"
             )
-            return link.get_attribute("href")
+            return canonical_book_url("storygraph", link.get_attribute("href"))
         except NoSuchElementException:
             return None
 
@@ -476,7 +506,15 @@ class StorygraphSync:
     def _saved_progress_matches(self, unit: str, value: str) -> bool:
         visible = self._visible_progress_form()
         if visible is None:
-            return True
+            # A closed form is not proof of persistence.  Read the hidden
+            # last-reached field that StoryGraph keeps on the book page.
+            selector = (
+                ".read-status-last-reached-pages"
+                if unit == "pages"
+                else ".read-status-last-reached-percent"
+            )
+            fields = self.driver.find_elements(By.CSS_SELECTOR, selector)
+            return any(field.get_attribute("value") == value for field in fields)
         form, _progress_input = visible
         selector = (
             ".read-status-last-reached-pages"
@@ -485,6 +523,33 @@ class StorygraphSync:
         )
         saved = form.find_element(By.CSS_SELECTOR, selector)
         return saved.get_attribute("value") == value
+
+    def _fresh_progress_matches(self, pages: int | None, pct: float | None) -> bool:
+        """Check progress fields after a fresh book-page navigation."""
+        if pages is not None:
+            values = [
+                field.get_attribute("value")
+                for field in self.driver.find_elements(
+                    By.CSS_SELECTOR, ".read-status-last-reached-pages"
+                )
+            ]
+            if str(pages) in values:
+                return True
+        if pct is not None:
+            values = [
+                field.get_attribute("value")
+                for field in self.driver.find_elements(
+                    By.CSS_SELECTOR, ".read-status-last-reached-percent"
+                )
+            ]
+            expected = round(float(pct))
+            for value in values:
+                try:
+                    if round(float(value)) == expected:
+                        return True
+                except (TypeError, ValueError):
+                    continue
+        return False
 
     def _do_update_progress(
         self, pages: int | None, pct: float | None, total_pages: int | None
@@ -576,14 +641,21 @@ class StorygraphSync:
 
             if unit == "pages" and pages is not None and pct is not None:
                 try:
+                    page_minimum = int(progress_input.get_attribute("min"))
+                except (TypeError, ValueError):
+                    page_minimum = None
+                try:
                     page_limit = int(progress_input.get_attribute("max"))
                 except (TypeError, ValueError):
                     page_limit = None
-                if page_limit is not None and pages > page_limit:
+                below_minimum = page_minimum is not None and pages < page_minimum
+                above_limit = page_limit is not None and pages > page_limit
+                if below_minimum or above_limit:
                     logger.warning(
-                        "StoryGraph edition allows %s pages, but source progress is "
-                        "%s; falling back to %.0f%% progress",
-                        page_limit,
+                        "StoryGraph pages field accepts %s-%s, but source progress "
+                        "is %s; falling back to %.0f%% progress",
+                        page_minimum if page_minimum is not None else "?",
+                        page_limit if page_limit is not None else "?",
                         pages,
                         pct,
                     )

@@ -1,7 +1,7 @@
-"""Shared Selenium WebDriver factory used by both Goodreads and StoryGraph modules."""
+"""Shared Selenium WebDriver factory with bounded diagnostics and cleanup."""
 
-import os
 import logging
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -10,23 +10,17 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 
-# Suppress Selenium's built-in Plausible telemetry
 os.environ.setdefault("SE_AVOID_STATS", "true")
-
 logger = logging.getLogger(__name__)
 
 
 def browser_user_agent(user_agent: str) -> str:
-    """Return the installed browser's normal UA without the headless marker."""
     return user_agent.replace("HeadlessChrome/", "Chrome/")
 
 
 def set_user_agent(
-    driver: webdriver.Chrome,
-    user_agent: str,
-    user_agent_metadata: dict | None = None,
+    driver: webdriver.Chrome, user_agent: str, user_agent_metadata: dict | None = None
 ) -> None:
-    """Apply a browser identity before navigating to an authenticated site."""
     if user_agent:
         parameters = {"userAgent": user_agent}
         if user_agent_metadata:
@@ -34,14 +28,81 @@ def set_user_agent(
         driver.execute_cdp_cmd("Network.setUserAgentOverride", parameters)
 
 
+class ChromeLog:
+    """Small bounded binary log sink compatible with Selenium's Service."""
+
+    def __init__(self, path: Path, max_bytes: int = 256 * 1024):
+        self.path = Path(path)
+        self.max_bytes = max(4096, int(max_bytes))
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = open(self.path, "ab", buffering=0)
+        self.stream = self
+        self._closed = False
+
+    def _rotate(self, incoming: int) -> None:
+        try:
+            size = self._handle.tell()
+        except (OSError, ValueError):
+            size = self.path.stat().st_size if self.path.exists() else 0
+        if size + incoming <= self.max_bytes:
+            return
+        self._handle.flush()
+        self._handle.close()
+        for index in (2, 1):
+            old = Path(f"{self.path}.{index}")
+            new = Path(f"{self.path}.{index + 1}")
+            if old.exists():
+                if index == 2:
+                    old.unlink(missing_ok=True)
+                else:
+                    old.replace(new)
+        if self.path.exists():
+            self.path.replace(Path(f"{self.path}.1"))
+        self._handle = open(self.path, "ab", buffering=0)
+
+    def write(self, value):
+        if isinstance(value, str):
+            value = value.encode()
+        if not value:
+            return 0
+        # Keep a single oversized line bounded as well.
+        if len(value) > self.max_bytes:
+            value = value[-self.max_bytes :]
+        self._rotate(len(value))
+        self._handle.write(value)
+        return len(value)
+
+    def flush(self):
+        self._handle.flush()
+
+    def fileno(self):
+        return self._handle.fileno()
+
+    def close(self):
+        if self._closed:
+            return
+        try:
+            self._handle.flush()
+        finally:
+            self._handle.close()
+            self._closed = True
+
+
 def build_options() -> tuple[Options, bool, dict[str, str]]:
-    """Build Chrome options and temporary runtime directories."""
     options = Options()
-    runtime_dirs = {
-        "user_data": tempfile.mkdtemp(prefix="hardcover-chrome-profile-"),
-        "data_path": tempfile.mkdtemp(prefix="hardcover-chrome-data-"),
-        "cache": tempfile.mkdtemp(prefix="hardcover-chrome-cache-"),
-    }
+    runtime_dirs: dict[str, str] = {}
+    try:
+        for name, prefix in (
+            ("user_data", "hardcover-chrome-profile-"),
+            ("data_path", "hardcover-chrome-data-"),
+            ("cache", "hardcover-chrome-cache-"),
+        ):
+            runtime_dirs[name] = tempfile.mkdtemp(prefix=prefix)
+    except Exception:
+        for runtime_dir in runtime_dirs.values():
+            shutil.rmtree(runtime_dir, ignore_errors=True)
+        raise
+
     headless = os.getenv("CHROME_HEADLESS", "1").lower() not in ("0", "false", "no")
     if headless:
         options.add_argument("--headless=new")
@@ -53,88 +114,95 @@ def build_options() -> tuple[Options, bool, dict[str, str]]:
     options.add_argument(f"--user-data-dir={runtime_dirs['user_data']}")
     options.add_argument(f"--data-path={runtime_dirs['data_path']}")
     options.add_argument(f"--disk-cache-dir={runtime_dirs['cache']}")
-    # Reduce bot-detection signals
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    # Selenium exposes this mapping to the driver and tests can inspect it before
+    # startup.  The same values are applied again below for older Selenium builds.
+    options.timeouts = {"implicit": 0, "pageLoad": 30000, "script": 15000}
 
     chrome_bin = os.getenv("CHROME_BIN")
     if chrome_bin and os.path.exists(chrome_bin):
         options.binary_location = chrome_bin
         logger.debug("Using Chrome binary: %s", chrome_bin)
-
     return options, headless, runtime_dirs
 
 
 def chrome_log_path() -> Path:
-    """Return the path used for ChromeDriver startup diagnostics."""
-    return Path(os.getenv("CHROMEDRIVER_LOG", "/tmp/hardcover-sync-chromedriver.log"))
+    return Path(
+        os.getenv(
+            "CHROMEDRIVER_LOG",
+            str(Path(tempfile.gettempdir()) / "hardcover-sync-chromedriver.log"),
+        )
+    )
+
+
+def _cleanup(runtime_dirs: dict[str, str]) -> None:
+    for runtime_dir in runtime_dirs.values():
+        shutil.rmtree(runtime_dir, ignore_errors=True)
 
 
 def create_driver() -> webdriver.Chrome:
-    """Return a Chrome WebDriver.
-
-    Respects two optional environment variables:
-      CHROME_BIN        – path to the Chromium/Chrome binary (set in Docker)
-      CHROMEDRIVER_PATH – path to chromedriver binary (set in Docker)
-      CHROMEDRIVER_LOG  – path to ChromeDriver's startup diagnostics
-
-    When those variables are absent (local dev) Selenium's default
-    PATH-based discovery is used instead.
-    """
     options, headless, runtime_dirs = build_options()
     log_path = chrome_log_path()
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_sink = open(log_path, "a", encoding="utf-8")
-
-    chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+    log_sink = None
+    driver = None
     try:
-        if chromedriver_path and os.path.exists(chromedriver_path):
-            logger.debug("Using ChromeDriver: %s", chromedriver_path)
-            driver = webdriver.Chrome(
-                service=Service(chromedriver_path, log_output=log_sink), options=options
-            )
-        else:
-            driver = webdriver.Chrome(
-                service=Service(log_output=log_sink), options=options
-            )
-    except Exception:
-        log_sink.close()
-        logger.exception("ChromeDriver failed to start; see %s", log_path)
-        for runtime_dir in runtime_dirs.values():
-            shutil.rmtree(runtime_dir, ignore_errors=True)
-        raise
-
-    original_quit = driver.quit
-
-    def quit_and_cleanup() -> None:
+        log_sink = ChromeLog(log_path)
+        chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+        service = (
+            Service(chromedriver_path, log_output=log_sink)
+            if chromedriver_path and os.path.exists(chromedriver_path)
+            else Service(log_output=log_sink)
+        )
+        driver = webdriver.Chrome(service=service, options=options)
+        # Apply bounded browser-side timeouts and Selenium command timeout.
+        for method, value in (
+            ("set_page_load_timeout", 30),
+            ("set_script_timeout", 15),
+            ("implicitly_wait", 0),
+        ):
+            try:
+                getattr(driver, method)(value)
+            except Exception:
+                logger.debug("Browser does not support %s", method, exc_info=True)
         try:
-            original_quit()
-        finally:
-            log_sink.close()
-            for runtime_dir in runtime_dirs.values():
-                shutil.rmtree(runtime_dir, ignore_errors=True)
+            client_config = driver.command_executor.client_config
+            client_config.timeout = min(client_config.timeout or 45, 45)
+        except Exception:
+            pass
 
-    driver.quit = quit_and_cleanup
+        original_quit = driver.quit
 
-    try:
-        # Goodreads currently serves an empty document to the default
-        # HeadlessChrome user agent. Derive a normal UA from the installed browser
-        # so the version remains accurate instead of hard-coding one.
+        def quit_and_cleanup() -> None:
+            try:
+                original_quit()
+            finally:
+                if log_sink is not None:
+                    log_sink.close()
+                _cleanup(runtime_dirs)
+
+        driver.quit = quit_and_cleanup
         if headless:
             version = driver.execute_cdp_cmd("Browser.getVersion", {})
-            user_agent = browser_user_agent(version.get("userAgent", ""))
-            set_user_agent(driver, user_agent)
-
-        if headless:
-            # Mask the navigator.webdriver property in headless mode.
+            set_user_agent(driver, browser_user_agent(version.get("userAgent", "")))
             driver.execute_cdp_cmd(
                 "Page.addScriptToEvaluateOnNewDocument",
                 {
                     "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
                 },
             )
+        return driver
     except Exception:
-        driver.quit()
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+        if log_sink is not None:
+            try:
+                log_sink.close()
+            except Exception:
+                pass
+        _cleanup(runtime_dirs)
+        logger.exception("ChromeDriver failed to start; see %s", log_path)
         raise
-
-    return driver

@@ -19,13 +19,26 @@ class Config:
     storygraph_password: str
     sync_interval_seconds: int
     state_file: str
+    goodreads_enabled: bool = True
+    storygraph_enabled: bool = True
 
 
-def load_config() -> Config:
+def _env_bool(name: str, default: bool = True) -> bool:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    if value.strip().casefold() in {"1", "true", "yes", "on"}:
+        return True
+    if value.strip().casefold() in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigError(f"{name} must be true or false")
+
+
+def load_config(*, require_api_key: bool = True) -> Config:
     load_dotenv()
 
     api_key = os.getenv("HARDCOVER_API_KEY", "").strip()
-    if not api_key or api_key == "your_hardcover_api_key_here":
+    if require_api_key and (not api_key or api_key == "your_hardcover_api_key_here"):
         raise ConfigError("HARDCOVER_API_KEY must be configured")
 
     raw_interval = os.getenv("SYNC_INTERVAL_MINUTES", "30").strip()
@@ -50,4 +63,6 @@ def load_config() -> Config:
         storygraph_password=os.getenv("STORYGRAPH_PASSWORD", ""),
         sync_interval_seconds=interval_minutes * 60,
         state_file=state_file,
+        goodreads_enabled=_env_bool("GOODREADS_ENABLED"),
+        storygraph_enabled=_env_bool("STORYGRAPH_ENABLED"),
     )

@@ -6,6 +6,11 @@ from selenium.webdriver.common.by import By
 
 import storygraph
 from storygraph import StorygraphSync
+from tests.destination_browser_fixture import (
+    BOOK as PROGRESS_BOOK,
+    SG_URL,
+    DestinationBrowserCase,
+)
 
 
 BOOK = {"title": "Winter's Heart", "author": "Robert Jordan"}
@@ -170,7 +175,9 @@ class FakeProgressDriver:
             if control is getattr(getattr(control, "form", None), "number", None):
                 if control.form.unit.value == "pages":
                     try:
-                        return control.valid and int(control.value) <= int(control.max)
+                        return control.valid and int(control.min) <= int(
+                            control.value
+                        ) <= int(control.max)
                     except (TypeError, ValueError):
                         return False
             return control.valid
@@ -358,6 +365,20 @@ class StorygraphTests(unittest.TestCase):
         self.assertEqual(form.last_percent.value, "98")
         self.assertEqual(form.save.clicks, 1)
 
+    def test_update_progress_falls_back_to_percentage_when_source_is_below_edition_min(
+        self,
+    ):
+        form = FakeProgressForm(True)
+        form.last_pages.value = "181"
+        result, _hidden = self.run_progress(form, pages=161, pct=20.5)
+        self.assertTrue(result)
+        self.assertEqual(form.unit.selected_units, ["pages", "percentage"])
+        self.assertEqual(form.unit.value, "percentage")
+        self.assertEqual(form.number.value, "20")
+        self.assertEqual(form.number.max, "100")
+        self.assertEqual(form.last_percent.value, "20")
+        self.assertEqual(form.save.clicks, 1)
+
     def test_update_progress_uses_controls_from_visible_form(self):
         form = FakeProgressForm(True)
         result, hidden = self.run_progress(form)
@@ -376,6 +397,54 @@ class StorygraphTests(unittest.TestCase):
         result, _hidden = self.run_progress(form)
         self.assertFalse(result)
         self.assertEqual(form.save.clicks, 1)
+
+
+class StorygraphBrowserTests(DestinationBrowserCase):
+    def sync(self):
+        sync = StorygraphSync("", "")
+        sync.driver = self.driver
+        return sync
+
+    def test_closed_form_after_failed_save_does_not_acknowledge_progress(self):
+        self.store.failed_save = True
+        result = self.sync().update_progress(PROGRESS_BOOK, SG_URL)
+        self.assertFalse(result.success)
+        self.assertEqual(self.store.books["1"]["pages"], 75)
+        self.assertEqual(len(self.store.mutations), 1)
+
+    def test_optimistic_progress_must_survive_fresh_read(self):
+        self.store.failed_save = True
+        self.store.optimistic_save = True
+        result = self.sync().update_progress(PROGRESS_BOOK, SG_URL)
+        self.assertFalse(result.success)
+        self.assertEqual(self.store.books["1"]["pages"], 75)
+
+    def test_saved_progress_is_verified_on_reloaded_book(self):
+        result = self.sync().update_progress(PROGRESS_BOOK, SG_URL)
+        self.assertTrue(result.success, result.reason)
+        self.assertEqual(self.store.books["1"]["pages"], 100)
+        self.assertGreaterEqual(self.store.opens.count(SG_URL), 2)
+
+    def test_stale_finish_button_does_not_acknowledge_failed_completion(self):
+        self.store.failed_finish = True
+        result = self.sync().mark_finished(PROGRESS_BOOK, SG_URL)
+        self.assertFalse(result.success)
+        self.assertEqual(self.store.books["1"]["status"], "currently reading")
+        self.assertEqual(len(self.store.mutations), 1)
+
+    def test_saved_finish_is_verified_on_reloaded_book(self):
+        result = self.sync().mark_finished(PROGRESS_BOOK, SG_URL)
+        self.assertTrue(result.success, result.reason)
+        self.assertEqual(self.store.books["1"]["status"], "read")
+        self.assertGreaterEqual(self.store.opens.count(SG_URL), 2)
+
+    def test_invalid_mapping_is_rejected_before_navigation(self):
+        result = self.sync().mark_finished(
+            PROGRESS_BOOK, "https://evil.test/books/dune"
+        )
+        self.assertFalse(result.success)
+        self.assertFalse(result.retryable)
+        self.assertEqual(self.store.opens, [])
 
 
 if __name__ == "__main__":

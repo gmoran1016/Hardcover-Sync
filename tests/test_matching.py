@@ -1,9 +1,68 @@
 import unittest
 
+import matching
 from matching import candidate_title, choose_match, normalise, result_score
 
 
 class MatchingTests(unittest.TestCase):
+    def test_sole_sequel_is_not_accepted_for_shorter_title(self):
+        self.assertIsNone(
+            choose_match(
+                "Dune", "Frank Herbert", [("Dune Messiah\nFrank Herbert", "wrong")]
+            )
+        )
+
+    def test_sole_explicit_wrong_author_is_rejected(self):
+        for evidence in (
+            "Dune\nJane Austen",
+            "Dune by Jane Austen",
+            "Dune — Jane Austen",
+        ):
+            with self.subTest(evidence=evidence):
+                self.assertIsNone(
+                    choose_match("Dune", "Frank Herbert", [(evidence, "wrong")])
+                )
+
+    def test_author_name_substrings_are_not_author_agreement(self):
+        self.assertIsNone(
+            choose_match("Dune", "Frank Herbert", [("Dune\nFrank Herbertson", "wrong")])
+        )
+
+    def test_canonical_provider_identity_ignores_goodreads_slug_and_tracking(self):
+        canonical = getattr(matching, "canonical_book_url", lambda *_: None)
+        self.assertEqual(
+            canonical(
+                "goodreads",
+                "https://goodreads.com/book/show/44767458.Dune?from_search=true#reviews",
+            ),
+            "https://www.goodreads.com/book/show/44767458",
+        )
+        self.assertEqual(
+            canonical(
+                "storygraph", "https://app.thestorygraph.com/books/abc-123/?ref=search"
+            ),
+            "https://app.thestorygraph.com/books/abc-123",
+        )
+
+    def test_canonical_provider_identity_rejects_unsafe_or_nonbook_urls(self):
+        canonical = getattr(matching, "canonical_book_url", lambda *_: "unsafe")
+        for destination, url in (
+            ("goodreads", "http://www.goodreads.com/book/show/1"),
+            ("goodreads", "https://www.goodreads.com.evil.test/book/show/1"),
+            ("goodreads", "https://user@www.goodreads.com/book/show/1"),
+            ("goodreads", "https://www.goodreads.com/book/show/wrong"),
+            ("goodreads", "https://www.goodreads.com:9443/book/show/1"),
+            ("goodreads", "https://www.goodreads.com/book/show/1/editions"),
+            ("goodreads", "https://www.goodreads.com/book/show/1%2F..%2F2"),
+            ("storygraph", "https://evil.test/books/abc-123"),
+            ("storygraph", "https://app.thestorygraph.com/books/new"),
+            ("storygraph", "https://app.thestorygraph.com/books/abc/editions"),
+            ("storygraph", "https://app.thestorygraph.com/books/../users/sign_in"),
+            ("other", "https://www.goodreads.com/book/show/1"),
+        ):
+            with self.subTest(destination=destination, url=url):
+                self.assertIsNone(canonical(destination, url))
+
     def test_normalise_handles_unicode_punctuation_and_parentheses(self):
         self.assertEqual(normalise("Café—World (Book One)!"), "cafe world")
 

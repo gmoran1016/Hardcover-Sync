@@ -8,6 +8,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,31 +33,45 @@ jobs:
           grep -F "[hardcover-sync-entrypoint] container starting" container.log
           grep -F "[hardcover-sync-entrypoint] virtual display is ready" container.log
           grep -F "usage:" container.log
+      - name: Verify Chrome renders an offline local page
+        run: docker run --rm hardcover-sync:test python -u browser_smoke.py
+      - name: Save the tested image for publication
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker save --output hardcover-sync-test.tar hardcover-sync:test
+      - name: Upload the tested image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardcover-sync-test-image
+          path: hardcover-sync-test.tar
+          retention-days: 1
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      actions: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - name: Download the tested image
+        uses: actions/download-artifact@v4
+        with:
+          name: hardcover-sync-test-image
+      - name: Load the tested image
+        run: docker load --input hardcover-sync-test.tar
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/hardcover-sync
-          tags: |
-            type=raw,value=latest
-            type=sha
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      - name: Publish the exact tested image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/hardcover-sync
+        run: |
+          docker tag hardcover-sync:test "$IMAGE:latest"
+          docker tag hardcover-sync:test "$IMAGE:sha-${GITHUB_SHA}"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:sha-${GITHUB_SHA}"

@@ -80,8 +80,17 @@ def setup_goodreads(driver: webdriver.Chrome) -> None:
     print("Log in to Goodreads in the browser window that just opened.")
     input("Press Enter here once you are fully logged in and can see your home feed: ")
 
-    # Confirm login succeeded
-    if "goodreads.com" in driver.current_url and "sign_in" not in driver.current_url:
+    # Confirm an account-specific authenticated indicator, not only a URL.
+    logged_in = False
+    try:
+        logged_in = bool(
+            driver.find_elements(
+                "css selector", 'a[href*="/user/show"], a[href*="/review/list"]'
+            )
+        )
+    except Exception:
+        logged_in = False
+    if logged_in and "sign_in" not in driver.current_url:
         save_cookies(driver, "goodreads.json")
         print("  Goodreads cookies saved successfully.")
     else:
@@ -99,10 +108,17 @@ def setup_storygraph(driver: webdriver.Chrome) -> None:
     print("Log in to StoryGraph in the browser window.")
     input("Press Enter here once you are fully logged in: ")
 
-    if (
-        "thestorygraph.com" in driver.current_url
-        and "sign_in" not in driver.current_url
-    ):
+    logged_in = False
+    try:
+        logged_in = bool(
+            driver.find_elements(
+                "css selector",
+                'a[href*="/profile/"], a[href*="/users/"][href*="/edit"], form[action*="/users/sign_out"]',
+            )
+        )
+    except Exception:
+        logged_in = False
+    if logged_in and "sign_in" not in driver.current_url:
         save_cookies(driver, "storygraph.json")
         print("  StoryGraph cookies saved successfully.")
     else:
@@ -121,6 +137,10 @@ def main() -> None:
 
     do_goodreads = input("Set up Goodreads cookies? [Y/n]: ").strip().lower() != "n"
     do_storygraph = input("Set up StoryGraph cookies? [y/N]: ").strip().lower() == "y"
+
+    if not do_goodreads and not do_storygraph:
+        print("No destinations selected; no browser was opened.")
+        return
 
     driver = create_visible_driver()
     try:
