@@ -1,2 +1,2 @@
 -r requirements.lock
-ruff==0.15.21
+ruff==0.17.1
