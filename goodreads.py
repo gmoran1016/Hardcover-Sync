@@ -104,11 +104,18 @@ class GoodreadsSync:
                 "unsafe or invalid Goodreads mapping", retryable=False
             )
         try:
+            target_url = target_url or self._search_book(title, book.get("author"))
             if target_url:
                 self.driver.get(target_url)
                 time.sleep(1)
                 if self._is_read_book_page():
                     return SyncResult.ok(target_url)
+            else:
+                logger.debug(
+                    "No direct Goodreads result for '%s'; checking the current-reading widget",
+                    title,
+                )
+
             self.driver.get(GOODREADS_URL)
             time.sleep(2)
 
@@ -129,12 +136,22 @@ class GoodreadsSync:
                 EC.element_to_be_clickable(
                     (
                         By.XPATH,
-                        '//button[contains(normalize-space(.), "finished")]',
+                        "//*[self::button or self::a][contains(translate("
+                        'normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", '
+                        '"abcdefghijklmnopqrstuvwxyz"), "finished") or '
+                        "normalize-space(translate(normalize-space(.), "
+                        '"ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"))='
+                        '"mark as read"]',
                     )
                 )
             )
             finished_btn.click()
-            WebDriverWait(self.driver, 10).until(EC.staleness_of(finished_btn))
+            try:
+                WebDriverWait(self.driver, 10).until(EC.staleness_of(finished_btn))
+            except TimeoutException:
+                # Goodreads may keep the updated control mounted. The fresh book
+                # page check below is the actual confirmation.
+                logger.debug("Finished control remained mounted for '%s'", title)
             confirmed_url = target_url or self._last_widget_url
             if confirmed_url:
                 self.driver.get(confirmed_url)
@@ -516,12 +533,18 @@ class GoodreadsSync:
             "button.Button--block",
             "[data-testid='shelf-status']",
             ".bookPage__shelfButton",
+            "button[aria-label]",
         ):
             for element in self.driver.find_elements(By.CSS_SELECTOR, selector):
-                if element.is_displayed() and normalise(element.text) in {
-                    "read",
-                    "already read",
-                }:
+                if not element.is_displayed():
+                    continue
+                if normalise(element.text) in {"read", "already read"}:
+                    return True
+                accessible_status = normalise(element.get_attribute("aria-label") or "")
+                if (
+                    accessible_status == "shelved as read"
+                    or accessible_status.startswith("shelved as read ")
+                ):
                     return True
         return False
 

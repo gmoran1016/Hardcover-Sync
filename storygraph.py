@@ -215,22 +215,29 @@ class StorygraphSync:
                 self.driver.execute_script("arguments[0].click();", expand_btn)
                 time.sleep(0.5)
 
-            wait.until(
-                EC.presence_of_all_elements_located(
-                    (By.CSS_SELECTOR, ".mark-as-finished-btn")
-                )
+            finish_selector = (
+                By.XPATH,
+                '//button[contains(concat(" ", normalize-space(@class), " "), '
+                '" mark-as-finished-btn ") or normalize-space(.)="Mark as read"]',
             )
-            all_finished = self.driver.find_elements(
-                By.CSS_SELECTOR, ".mark-as-finished-btn"
-            )
+            wait.until(EC.presence_of_all_elements_located(finish_selector))
+            # Re-read the elements after waiting. Lightweight driver doubles may
+            # return a truthy sentinel from ``until`` instead of the condition's
+            # value, while Selenium returns the matching list.
+            all_finished = self.driver.find_elements(*finish_selector)
             finished_btn = next((b for b in all_finished if b.is_displayed()), None)
             if finished_btn is None:
-                logger.error("mark-as-finished button not visible for '%s'", title)
+                logger.error("finish action not visible for '%s'", title)
                 return SyncResult.failed(
-                    "finish button was not visible", target_url=target_url
+                    "finish action was not visible", target_url=target_url
                 )
             self.driver.execute_script("arguments[0].click();", finished_btn)
-            WebDriverWait(self.driver, 10).until(EC.staleness_of(finished_btn))
+            WebDriverWait(self.driver, 10).until(
+                lambda driver: (
+                    current_reading_status(driver) == "read"
+                    or EC.staleness_of(finished_btn)(driver)
+                )
+            )
             # Real WebDriver sessions must re-read the page after the button
             # disappears.  Minimal unit doubles without page content retain the
             # older staleness contract and cannot provide an independent read.

@@ -48,6 +48,8 @@ class FakeDriver:
             return [FakeElement("expand")]
         if (by, selector) == (By.CSS_SELECTOR, ".mark-as-finished-btn"):
             return self.finish_buttons
+        if by == By.XPATH and "mark-as-finished-btn" in selector:
+            return self.finish_buttons
         return []
 
     def execute_script(self, _script, *arguments):
