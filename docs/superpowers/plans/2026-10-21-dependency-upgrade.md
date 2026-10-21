@@ -13,6 +13,7 @@
 ## Global Constraints
 
 - Preserve the supported Python 3.11 runtime.
+- Bump the app patch version to `2.1.2` because the repository pre-push hook rejects pushes with an unchanged `VERSION`.
 - Preserve exact pins and the existing runtime/dev dependency split.
 - Leave the untracked `output/` directory untouched and unstaged.
 - Use the repository's GitHub Actions workflow to verify the pushed Linux Docker build.
@@ -52,9 +53,11 @@
 ### Task 3: Verify, commit, push, and inspect GitHub Actions
 
 **Files:**
+- Modify: `main.py` (`VERSION`)
 - Verify the complete scoped diff before staging.
 
 - [x] Run dependency consistency, Ruff, formatting, compilation, and unit checks.
 - [x] Validate Compose configuration; the local Docker engine is unavailable, so verify the image build through GitHub Actions.
-- [ ] Commit only the plan, dependency, Ruff configuration, and workflow changes; push a branch and open a draft PR.
+- [x] Set `VERSION` to `2.1.2` to satisfy the pre-push hook.
+- [ ] Commit only the version, plan, dependency, Ruff configuration, and workflow changes; push a branch and open a draft PR.
 - [ ] Watch the workflow for the exact PR commit and report its test and Docker build results.
