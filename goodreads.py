@@ -24,10 +24,11 @@ Flow for each book:
   5. Click Update progress and submit the page count.
 """
 
+import json
 import logging
 import os
 import time
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urljoin
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -427,6 +428,7 @@ class GoodreadsSync:
             f"{GOODREADS_URL}/search?q={quote_plus(query)}&search_type=books"
         )
 
+        candidates = []
         try:
             wait = WebDriverWait(self.driver, 10)
             links = wait.until(
@@ -438,7 +440,6 @@ class GoodreadsSync:
                 )
             )
 
-            candidates = []
             for link in links[:5]:
                 text = link.text
                 try:
@@ -447,16 +448,70 @@ class GoodreadsSync:
                 except NoSuchElementException:
                     pass
                 candidates.append((text, link.get_attribute("href")))
-            match = choose_match(title, author, candidates)
-            if match:
-                logger.debug("Matched Goodreads result for '%s': %s", title, match)
-                return canonical_book_url("goodreads", match)
-            logger.warning("No unambiguous Goodreads match for '%s'", title)
 
         except TimeoutException:
-            logger.error("Timeout searching Goodreads for '%s'", title)
+            logger.warning(
+                "Goodreads search page timed out for '%s'; trying autocomplete",
+                title,
+            )
 
-        return None
+        match = choose_match(title, author, candidates)
+        if match:
+            safe_match = canonical_book_url("goodreads", match)
+            if safe_match:
+                logger.debug("Matched Goodreads result for '%s': %s", title, safe_match)
+                return safe_match
+
+        return self._search_book_autocomplete(title, author, query)
+
+    def _search_book_autocomplete(
+        self, title: str, author: str | None, query: str
+    ) -> str | None:
+        endpoint = (
+            f"{GOODREADS_URL}/book/auto_complete?format=json&q={quote_plus(query)}"
+        )
+        try:
+            self.driver.get(endpoint)
+            payload = json.loads(self.driver.find_element(By.TAG_NAME, "body").text)
+        except (NoSuchElementException, TimeoutException, TypeError, ValueError) as exc:
+            logger.warning(
+                "Goodreads autocomplete search failed for '%s': %s", title, exc
+            )
+            return None
+        if not isinstance(payload, list):
+            logger.warning(
+                "Goodreads autocomplete returned invalid results for '%s'", title
+            )
+            return None
+
+        candidates = []
+        for item in payload[:10]:
+            if not isinstance(item, dict):
+                continue
+            candidate_title = item.get("bookTitleBare") or item.get("title")
+            candidate_url = item.get("bookUrl") or item.get("url")
+            if not isinstance(candidate_title, str) or not isinstance(
+                candidate_url, str
+            ):
+                continue
+            candidate_author = item.get("author")
+            if isinstance(candidate_author, dict):
+                candidate_author = candidate_author.get("name")
+            evidence = candidate_title
+            if isinstance(candidate_author, str) and candidate_author.strip():
+                evidence += f"\n{candidate_author.strip()}"
+            safe_url = canonical_book_url(
+                "goodreads", urljoin(GOODREADS_URL, candidate_url)
+            )
+            if safe_url:
+                candidates.append((evidence, safe_url))
+
+        match = choose_match(title, author, candidates)
+        if not match:
+            logger.warning("No unambiguous Goodreads match for '%s'", title)
+            return None
+        logger.debug("Matched Goodreads autocomplete result for '%s': %s", title, match)
+        return match
 
     def _ensure_currently_reading(self) -> bool:
         """Click the shelf button and pick 'Currently reading' from the dropdown.

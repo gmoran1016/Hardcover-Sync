@@ -1,7 +1,40 @@
+import json
 import unittest
+from unittest.mock import patch
 
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.by import By
+
+import goodreads
 from goodreads import GoodreadsSync
 from tests.destination_browser_fixture import BOOK, GR_URL, DestinationBrowserCase
+
+
+class SearchTimeoutWait:
+    def __init__(self, *_args):
+        pass
+
+    def until(self, _condition):
+        raise TimeoutException()
+
+
+class TextBody:
+    def __init__(self, text):
+        self.text = text
+
+
+class AutocompleteDriver:
+    def __init__(self, response):
+        self.response = response
+        self.visited = []
+
+    def get(self, url):
+        self.visited.append(url)
+
+    def find_element(self, by, selector):
+        if (by, selector) == (By.TAG_NAME, "body"):
+            return TextBody(self.response)
+        raise AssertionError((by, selector))
 
 
 class GoodreadsBrowserTests(DestinationBrowserCase):
@@ -68,6 +101,47 @@ class GoodreadsBrowserTests(DestinationBrowserCase):
         self.assertFalse(result.retryable)
         self.assertEqual(self.store.mutations, [])
         self.assertEqual(self.store.opens, [])
+
+
+class GoodreadsSearchTests(unittest.TestCase):
+    def test_search_uses_goodreads_autocomplete_after_search_page_timeout(self):
+        response = json.dumps(
+            [
+                {
+                    "bookTitleBare": "Winter's Heart",
+                    "bookUrl": "/book/show/13891.Winter_s_Heart",
+                    "author": {"name": "Robert Jordan"},
+                }
+            ]
+        )
+        driver = AutocompleteDriver(response)
+        sync = GoodreadsSync("", "")
+        sync.driver = driver
+
+        with patch.object(goodreads, "WebDriverWait", SearchTimeoutWait):
+            result = sync._search_book("Winter's Heart", "Robert Jordan")
+
+        self.assertEqual(result, "https://www.goodreads.com/book/show/13891")
+        self.assertEqual(len(driver.visited), 2)
+        self.assertIn("/book/auto_complete?format=json", driver.visited[1])
+
+    def test_search_rejects_autocomplete_result_with_conflicting_author(self):
+        response = json.dumps(
+            [
+                {
+                    "bookTitleBare": "Winter's Heart",
+                    "bookUrl": "/book/show/13891.Winter_s_Heart",
+                    "author": {"name": "Another Author"},
+                }
+            ]
+        )
+        sync = GoodreadsSync("", "")
+        sync.driver = AutocompleteDriver(response)
+
+        with patch.object(goodreads, "WebDriverWait", SearchTimeoutWait):
+            result = sync._search_book("Winter's Heart", "Robert Jordan")
+
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":
