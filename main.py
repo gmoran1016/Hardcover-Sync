@@ -32,7 +32,7 @@ from sync_state import (
     recover_state,
 )
 
-VERSION = "2.1.2"
+VERSION = "2.1.3"
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -100,6 +100,13 @@ def _blocked(destination_state: dict, book_id: str, signature: str) -> bool:
     )
 
 
+def _has_source_progress(book: dict) -> bool:
+    return (
+        book.get("progress_pages") is not None
+        or book.get("progress_percent") is not None
+    )
+
+
 def _sync_destination(
     name: str,
     adapter,
@@ -117,6 +124,9 @@ def _sync_destination(
     for book_id, book in current_books.items():
         if cancel_event and cancel_event.is_set():
             break
+        if not _has_source_progress(book):
+            skipped += 1
+            continue
         signature = progress_signature(book)
         if synced.get(book_id) == signature or _blocked(
             destination_state, book_id, signature
@@ -198,6 +208,8 @@ def _has_destination_work(
 ) -> bool:
     synced = destination_state.get("books", {})
     for book_id, book in current_books.items():
+        if not _has_source_progress(book):
+            continue
         signature = progress_signature(book)
         if synced.get(book_id) != signature and not _blocked(
             destination_state, book_id, signature
@@ -219,6 +231,8 @@ def _has_blocked_work(
 ) -> bool:
     failures = destination_state.get("failures", {})
     for book_id, book in current_books.items():
+        if not _has_source_progress(book):
+            continue
         failure = failures.get(book_id)
         if (
             failure
@@ -245,6 +259,8 @@ def _pending_destination_count(
     synced = destination_state.get("books", {})
     pending = 0
     for book_id, book in current_books.items():
+        if not _has_source_progress(book):
+            continue
         pending += synced.get(book_id) != progress_signature(book)
     for book_id, book in pending_finished.items():
         pending += synced.get(book_id) != finished_signature(book)
@@ -440,6 +456,8 @@ def run_sync(
                             destination_failed = 1
                             totals["failed"] += destination_failed
                             for book_id, book in current_books.items():
+                                if not _has_source_progress(book):
+                                    continue
                                 _record_failure(
                                     destination_state,
                                     book_id,

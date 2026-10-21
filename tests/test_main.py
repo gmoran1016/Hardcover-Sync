@@ -131,6 +131,22 @@ class MainTests(unittest.TestCase):
         self.assertNotIn("7", destination["books"])
         self.assertIn("8", destination["books"])
 
+    def test_missing_source_progress_is_skipped_without_destination_work(self):
+        book = dict(BOOK, progress_pages=None, progress_percent=None)
+        destination = {"books": {}, "mappings": {}, "failures": {}}
+        adapter = FakeAdapter()
+
+        counts = main._sync_destination(
+            "StoryGraph", adapter, destination, {"7": book}, {}
+        )
+
+        self.assertEqual(counts, (0, 0, 1))
+        self.assertEqual(destination["books"], {})
+        self.assertFalse(main._has_destination_work(destination, {"7": book}, {}))
+        self.assertEqual(
+            main._pending_destination_count(destination, {"7": book}, {}), 0
+        )
+
     def test_success_records_destination_and_mapping(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "state.json")
