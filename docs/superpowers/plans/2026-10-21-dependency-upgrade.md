@@ -59,5 +59,5 @@
 - [x] Run dependency consistency, Ruff, formatting, compilation, and unit checks.
 - [x] Validate Compose configuration; the local Docker engine is unavailable, so verify the image build through GitHub Actions.
 - [x] Set `VERSION` to `2.1.2` to satisfy the pre-push hook.
-- [ ] Commit only the version, plan, dependency, Ruff configuration, and workflow changes; push a branch and open a draft PR.
-- [ ] Watch the workflow for the exact PR commit and report its test and Docker build results.
+- [x] Commit only the version, plan, dependency, Ruff configuration, and workflow changes; push a branch and open a draft PR.
+- [x] Verify PR commit `cefd398` in GitHub Actions run 45; dependency checks, tests, Docker build, entrypoint checks, and Chrome smoke test passed.
