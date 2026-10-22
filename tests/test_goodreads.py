@@ -104,6 +104,30 @@ class GoodreadsBrowserTests(DestinationBrowserCase):
 
 
 class GoodreadsSearchTests(unittest.TestCase):
+    def test_search_accepts_shared_author_for_multi_author_hardcover_book(self):
+        response = json.dumps(
+            [
+                {
+                    "bookTitleBare": "The Gathering Storm",
+                    "bookUrl": "/book/show/1166599.The_Gathering_Storm",
+                    "author": {"name": "Robert Jordan"},
+                }
+            ]
+        )
+        sync = GoodreadsSync("", "")
+        sync.driver = AutocompleteDriver(response)
+
+        with patch.object(goodreads, "WebDriverWait", SearchTimeoutWait):
+            result = sync._search_book(
+                "The Gathering Storm", ["Brandon Sanderson", "Robert Jordan"]
+            )
+
+        self.assertEqual(result, "https://www.goodreads.com/book/show/1166599")
+        self.assertIn(
+            "q=The+Gathering+Storm+Brandon+Sanderson+Robert+Jordan",
+            sync.driver.visited[0],
+        )
+
     def test_search_uses_goodreads_autocomplete_after_search_page_timeout(self):
         response = json.dumps(
             [

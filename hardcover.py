@@ -143,7 +143,7 @@ def _request(api_key: str, query: str, variables: dict | None = None) -> dict:
     return data
 
 
-def _author(book: dict) -> str:
+def _authors(book: dict) -> list[str]:
     contributions = book.get("contributions")
     if contributions is None:
         contributions = []
@@ -151,19 +151,24 @@ def _author(book: dict) -> str:
         not isinstance(contribution, dict) for contribution in contributions
     ):
         raise HardcoverAPIError("Hardcover returned malformed book contributions")
-    if not contributions:
-        return "Unknown"
-    author = contributions[0].get("author")
-    if author is None:
-        author = {}
-    if not isinstance(author, dict):
-        raise HardcoverAPIError("Hardcover returned a malformed author object")
-    name = author.get("name")
-    if name is None:
-        return "Unknown"
-    if not isinstance(name, str) or not name.strip():
-        raise HardcoverAPIError("Hardcover returned a malformed author name")
-    return name.strip()
+    authors = []
+    seen = set()
+    for contribution in contributions:
+        author = contribution.get("author")
+        if author is None:
+            author = {}
+        if not isinstance(author, dict):
+            raise HardcoverAPIError("Hardcover returned a malformed author object")
+        name = author.get("name")
+        if name is None:
+            continue
+        if not isinstance(name, str) or not name.strip():
+            raise HardcoverAPIError("Hardcover returned a malformed author name")
+        name = name.strip()
+        if name.casefold() not in seen:
+            authors.append(name)
+            seen.add(name.casefold())
+    return authors
 
 
 def _number(value, field: str, *, maximum: float | None = None):
@@ -220,6 +225,7 @@ def _book_entry(user_book: dict) -> dict:
     progress_percent = _number(
         latest.get("progress"), "progress percentage", maximum=100
     )
+    authors = _authors(book)
     return {
         "id": str(user_book_id),
         "user_book_id": user_book_id,
@@ -228,7 +234,8 @@ def _book_entry(user_book: dict) -> dict:
         "read_id": read_id,
         "status_id": status_id,
         "title": title.strip(),
-        "author": _author(book),
+        "author": authors[0] if authors else "Unknown",
+        "authors": authors,
         "total_pages": total_pages,
         "progress_pages": progress_pages,
         "progress_percent": progress_percent,
@@ -311,12 +318,14 @@ def get_book_statuses(api_key: str, ids: list[int]) -> dict[str, dict]:
         total_pages = _number(
             edition.get("pages") or book.get("pages"), "total page count"
         )
+        authors = _authors(book)
         statuses[key] = {
             "id": key,
             "user_book_id": user_book_id,
             "book_id": book_id,
             "title": title.strip(),
-            "author": _author(book),
+            "author": authors[0] if authors else "Unknown",
+            "authors": authors,
             "total_pages": total_pages,
             "status_id": status_id,
             "read_id": read_id,

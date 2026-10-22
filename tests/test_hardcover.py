@@ -172,6 +172,34 @@ class HardcoverTests(unittest.TestCase):
         with patch("hardcover._session", return_value=session):
             self.assertEqual(get_currently_reading("token"), [])
 
+    def test_current_book_preserves_all_author_contributions(self):
+        payload = {
+            "data": {
+                "me": [
+                    {
+                        "user_books": [
+                            {
+                                "id": 1,
+                                "book": {
+                                    "id": 2,
+                                    "title": "The Gathering Storm",
+                                    "contributions": [
+                                        {"author": {"name": "Brandon Sanderson"}},
+                                        {"author": {"name": "Robert Jordan"}},
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        with self.response_with(payload):
+            books = get_currently_reading("token")
+
+        self.assertEqual(books[0]["author"], "Brandon Sanderson")
+        self.assertEqual(books[0]["authors"], ["Brandon Sanderson", "Robert Jordan"])
+
     def test_request_failure_raises(self):
         session = Mock()
         session.post.side_effect = requests.Timeout("offline")

@@ -171,6 +171,7 @@ class StorygraphSync:
     def mark_finished(self, book: dict, book_url: str | None = None) -> SyncResult:
         """Mark a book as finished on StoryGraph via the 'mark as finished' button."""
         title = book["title"]
+        author = book.get("authors") or book.get("author")
         logger.info("Marking StoryGraph as finished: '%s'", title)
         target_url = canonical_book_url("storygraph", book_url) if book_url else None
         if book_url and not target_url:
@@ -178,7 +179,7 @@ class StorygraphSync:
                 "unsafe or invalid StoryGraph mapping", retryable=False
             )
         try:
-            target_url = target_url or self._search_book(title, book.get("author"))
+            target_url = target_url or self._search_book(title, author)
             if not target_url:
                 logger.warning(
                     "Could not find '%s' on StoryGraph to mark finished", title
@@ -261,6 +262,7 @@ class StorygraphSync:
 
     def update_progress(self, book: dict, book_url: str | None = None) -> SyncResult:
         title = book["title"]
+        author = book.get("authors") or book.get("author")
         pages = book.get("progress_pages")
         pct = book.get("progress_percent")
         total = book.get("total_pages")
@@ -278,7 +280,7 @@ class StorygraphSync:
                 "unsafe or invalid StoryGraph mapping", retryable=False
             )
         try:
-            target_url = target_url or self._search_book(title, book.get("author"))
+            target_url = target_url or self._search_book(title, author)
             if not target_url:
                 logger.warning("Could not find '%s' on StoryGraph", title)
                 return SyncResult.failed("no unambiguous StoryGraph search result")
@@ -309,7 +311,9 @@ class StorygraphSync:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _search_book(self, title: str, author: str | None = None) -> str | None:
+    def _search_book(
+        self, title: str, author: str | list[str] | None = None
+    ) -> str | None:
         search_url = f"{STORYGRAPH_URL}/browse?search_term={quote_plus(title)}"
         self.driver.get(search_url)
 

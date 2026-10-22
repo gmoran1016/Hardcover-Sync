@@ -75,6 +75,30 @@ class MatchingTests(unittest.TestCase):
             choose_match("The Stand", "Stephen King", candidates), "correct"
         )
 
+    def test_choose_match_accepts_any_matching_source_contributor(self):
+        candidate = (
+            "The Gathering Storm (The Wheel of Time, #12)\nRobert Jordan",
+            "https://www.goodreads.com/book/show/1166599",
+        )
+        self.assertEqual(
+            choose_match(
+                "The Gathering Storm",
+                ["Brandon Sanderson", "Robert Jordan"],
+                [candidate],
+            ),
+            candidate[1],
+        )
+
+    def test_choose_match_rejects_candidate_matching_no_source_authors(self):
+        candidate = ("The Gathering Storm\nJane Austen", "wrong")
+        self.assertIsNone(
+            choose_match(
+                "The Gathering Storm",
+                ["Brandon Sanderson", "Robert Jordan"],
+                [candidate],
+            )
+        )
+
     def test_choose_match_does_not_fall_back_to_first_result(self):
         candidates = [("A Completely Different Book", "wrong")]
         self.assertIsNone(choose_match("Dune", "Frank Herbert", candidates))

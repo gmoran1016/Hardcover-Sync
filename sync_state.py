@@ -61,6 +61,14 @@ def _validate_book(record, field: str, record_key: str | None = None) -> dict:
         raise StateError(f"Sync state field '{field}' contains an invalid title")
     if "author" in book and not isinstance(book["author"], str):
         raise StateError(f"Sync state field '{field}' contains an invalid author")
+    if "authors" in book and (
+        not isinstance(book["authors"], list)
+        or any(
+            not isinstance(author, str) or not author.strip()
+            for author in book["authors"]
+        )
+    ):
+        raise StateError(f"Sync state field '{field}' contains invalid authors")
     for field_key in ("id", "user_book_id", "book_id", "edition_id", "read_id"):
         if field_key in book and book[field_key] is not None:
             value = book[field_key]

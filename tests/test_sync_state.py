@@ -17,9 +17,15 @@ class StateTests(unittest.TestCase):
             first = empty_state()
             save_state(path, first)
             second = empty_state()
-            second["source_books"]["12"] = {"id": "12", "title": "Dune"}
+            second["source_books"]["12"] = {
+                "id": "12",
+                "title": "Dune",
+                "authors": ["Frank Herbert", "Brian Herbert"],
+            }
             save_state(path, second)
-            self.assertEqual(load_state(path)["source_books"]["12"]["title"], "Dune")
+            loaded = load_state(path)["source_books"]["12"]
+            self.assertEqual(loaded["title"], "Dune")
+            self.assertEqual(loaded["authors"], ["Frank Herbert", "Brian Herbert"])
             self.assertTrue(os.path.exists(f"{path}.bak"))
 
     def test_migrates_legacy_title_state(self):
@@ -104,6 +110,9 @@ class StateTests(unittest.TestCase):
             {"id": "99", "title": "Dune"},
             {"title": "Dune", "user_book_id": "bad"},
             {"title": "Dune", "author": []},
+            {"title": "Dune", "authors": "Frank Herbert"},
+            {"title": "Dune", "authors": [""]},
+            {"title": "Dune", "authors": ["Frank Herbert", 1]},
             {"title": "Dune", "progress_pages": -1},
             {"title": "Dune", "progress_percent": float("nan")},
             {"title": "Dune", "progress_percent": 101},

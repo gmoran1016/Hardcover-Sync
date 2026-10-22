@@ -98,6 +98,7 @@ class GoodreadsSync:
     def mark_finished(self, book: dict, book_url: str | None = None) -> SyncResult:
         """Mark a book as finished on Goodreads via the 'I'm finished!' button."""
         title = book["title"]
+        author = book.get("authors") or book.get("author")
         logger.info("Marking Goodreads as finished: '%s'", title)
         target_url = canonical_book_url("goodreads", book_url) if book_url else None
         if book_url and not target_url:
@@ -105,7 +106,7 @@ class GoodreadsSync:
                 "unsafe or invalid Goodreads mapping", retryable=False
             )
         try:
-            target_url = target_url or self._search_book(title, book.get("author"))
+            target_url = target_url or self._search_book(title, author)
             if target_url:
                 self.driver.get(target_url)
                 time.sleep(1)
@@ -120,9 +121,7 @@ class GoodreadsSync:
             self.driver.get(GOODREADS_URL)
             time.sleep(2)
 
-            if not self._click_update_progress_for(
-                title, target_url, book.get("author")
-            ):
+            if not self._click_update_progress_for(title, target_url, author):
                 logger.warning(
                     "'%s' not in Currently Reading widget; can't mark finished", title
                 )
@@ -174,6 +173,7 @@ class GoodreadsSync:
 
     def update_progress(self, book: dict, book_url: str | None = None) -> SyncResult:
         title = book["title"]
+        author = book.get("authors") or book.get("author")
         pages = book.get("progress_pages")
         pct = book.get("progress_percent")
 
@@ -195,14 +195,12 @@ class GoodreadsSync:
             self.driver.get(GOODREADS_URL)
             time.sleep(2)
 
-            if not self._click_update_progress_for(
-                title, target_url, book.get("author")
-            ):
+            if not self._click_update_progress_for(title, target_url, author):
                 # Book isn't in Currently Reading widget — add it first via the book page
                 logger.info(
                     "Book not in Currently Reading widget; adding it to the shelf…"
                 )
-                target_url = target_url or self._search_book(title, book.get("author"))
+                target_url = target_url or self._search_book(title, author)
                 if target_url:
                     self.driver.get(target_url)
                     time.sleep(5)
@@ -221,9 +219,7 @@ class GoodreadsSync:
                     time.sleep(4)
                     self.driver.get(GOODREADS_URL)
                     time.sleep(3)
-                    if not self._click_update_progress_for(
-                        title, target_url, book.get("author")
-                    ):
+                    if not self._click_update_progress_for(title, target_url, author):
                         logger.error(
                             "Still can't find Update progress for '%s' after adding to shelf — "
                             "the Currently Reading widget may take longer to appear; "
@@ -420,9 +416,12 @@ class GoodreadsSync:
     # Book search & shelf management
     # ------------------------------------------------------------------
 
-    def _search_book(self, title: str, author: str | None) -> str | None:
+    def _search_book(self, title: str, author: str | list[str] | None) -> str | None:
+        author_query = " ".join(author) if isinstance(author, list) else author
         query = (
-            f"{title} {author}" if author and author not in ("Unknown", "") else title
+            f"{title} {author_query}"
+            if author_query and author_query not in ("Unknown", "")
+            else title
         )
         self.driver.get(
             f"{GOODREADS_URL}/search?q={quote_plus(query)}&search_type=books"
@@ -465,7 +464,7 @@ class GoodreadsSync:
         return self._search_book_autocomplete(title, author, query)
 
     def _search_book_autocomplete(
-        self, title: str, author: str | None, query: str
+        self, title: str, author: str | list[str] | None, query: str
     ) -> str | None:
         endpoint = (
             f"{GOODREADS_URL}/book/auto_complete?format=json&q={quote_plus(query)}"
@@ -618,7 +617,10 @@ class GoodreadsSync:
         return expected in normalise(getattr(self.driver, "page_source", "")).split()
 
     def _click_update_progress_for(
-        self, title: str, target_url: str | None = None, author: str | None = None
+        self,
+        title: str,
+        target_url: str | None = None,
+        author: str | list[str] | None = None,
     ) -> bool:
         """Click only the widget whose canonical book URL matches the request."""
         try:

@@ -97,34 +97,44 @@ def candidate_title(candidate_text: str) -> str:
     )
 
 
-def _author_evidence(author: str, candidate_text: str) -> tuple[bool, bool]:
+def _author_evidence(author: str | list[str], candidate_text: str) -> tuple[bool, bool]:
     """Return (agreement, explicit_conflict) using token boundaries."""
-    expected = normalise(author)
-    if not expected or expected == "unknown":
+    expected = author if isinstance(author, list) else [author]
+    expected_tokens = [
+        value.split()
+        for name in expected
+        if isinstance(name, str) and (value := normalise(name)) and value != "unknown"
+    ]
+    if not expected_tokens:
         return False, False
-    expected_tokens = expected.split()
     lines = [normalise(line) for line in candidate_text.splitlines() if line.strip()]
     whole = normalise(candidate_text)
     agreement = False
     explicit = False
     for line_index, line in enumerate(lines + [whole]):
         tokens = line.split()
-        for index in range(max(0, len(tokens) - len(expected_tokens) + 1)):
-            if tokens[index : index + len(expected_tokens)] == expected_tokens:
-                agreement = True
+        line_agrees = any(
+            tokens[index : index + len(name_tokens)] == name_tokens
+            for name_tokens in expected_tokens
+            for index in range(max(0, len(tokens) - len(name_tokens) + 1))
+        )
+        if line_agrees:
+            agreement = True
         if (
             line.startswith("by ")
             or " by " in line
-            or (line_index > 0 and line != expected)
+            or line_index > 0
             or (" — " in candidate_text or " - " in candidate_text)
             and line_index == 0
         ):
-            if not agreement:
+            if not line_agrees:
                 explicit = True
     return agreement, explicit
 
 
-def result_score(title: str, author: str | None, candidate_text: str) -> float:
+def result_score(
+    title: str, author: str | list[str] | None, candidate_text: str
+) -> float:
     title_component = max(
         (
             title_score(title, line.strip())
@@ -133,8 +143,11 @@ def result_score(title: str, author: str | None, candidate_text: str) -> float:
         ),
         default=title_score(title, candidate_text),
     )
-    author_norm = normalise(author or "")
-    if not author_norm or author_norm == "unknown":
+    expected_authors = author if isinstance(author, list) else [author]
+    if not any(
+        isinstance(name, str) and normalise(name) not in ("", "unknown")
+        for name in expected_authors
+    ):
         return title_component
     agreement, conflict = _author_evidence(author, candidate_text)
     if conflict and not agreement:
@@ -155,7 +168,7 @@ def result_score(title: str, author: str | None, candidate_text: str) -> float:
 
 def choose_match(
     title: str,
-    author: str | None,
+    author: str | list[str] | None,
     candidates: list[tuple[str, str]],
     threshold: float = 0.82,
     margin: float = 0.05,
