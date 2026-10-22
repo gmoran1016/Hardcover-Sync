@@ -292,6 +292,10 @@ It also recognizes StoryGraph cards that show a series label before the title,
 waits for late-rendered search results, and treats duplicate cards with identical
 visible evidence as equivalent while retaining the ambiguity guard for different
 near-matches.
+Version 2.1.6 retains all Hardcover author contributions when matching Goodreads
+and StoryGraph books. This handles Goodreads results that list Robert Jordan for
+*The Gathering Storm* while Hardcover also credits Brandon Sanderson, without
+allowing candidates with no matching author.
 
 ### Docker: Chrome crashes
 Keep `shm_size: "256mb"` in your compose file (or `--shm-size=256m` in
