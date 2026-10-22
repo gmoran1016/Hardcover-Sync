@@ -286,6 +286,8 @@ StoryGraph edition or its current progress state makes the absolute page value
 invalid, the sync instead submits the source percentage. This covers both shorter
 editions and destination progress fields whose minimum is ahead of the Hardcover
 page count.
+Version 2.1.5 also selects a visible StoryGraph progress control when the page
+contains hidden responsive duplicates.
 It also recognizes StoryGraph cards that show a series label before the title,
 waits for late-rendered search results, and treats duplicate cards with identical
 visible evidence as equivalent while retaining the ambiguity guard for different

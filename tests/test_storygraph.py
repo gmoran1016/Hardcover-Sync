@@ -407,6 +407,39 @@ class StorygraphBrowserTests(DestinationBrowserCase):
         sync.driver = self.driver
         return sync
 
+    def test_hidden_track_progress_duplicate_does_not_block_progress(self):
+        sync = self.sync()
+        navigate = self.driver.get
+        injected = False
+
+        def navigate_with_hidden_duplicate(url):
+            nonlocal injected
+            navigate(url)
+            if not injected:
+                self.driver.execute_script("""
+                    const wrapper = document.createElement('div');
+                    wrapper.style.display = 'none';
+                    wrapper.innerHTML = `
+                      <button class="track-progress-button"
+                        onclick="document.querySelector('#hidden-progress').hidden=false">
+                        Track progress
+                      </button>
+                      <form id="hidden-progress" hidden>
+                        <input id="hidden-progress-number" type="number">
+                      </form>`;
+                    document.body.prepend(wrapper);
+                """)
+                injected = True
+
+        with patch.object(
+            self.driver, "get", side_effect=navigate_with_hidden_duplicate
+        ):
+            result = sync.update_progress(PROGRESS_BOOK, SG_URL)
+
+        self.assertTrue(result.success, result.reason)
+        self.assertEqual(self.store.books["1"]["pages"], 100)
+        self.assertEqual(len(self.store.mutations), 1)
+
     def test_closed_form_after_failed_save_does_not_acknowledge_progress(self):
         self.store.failed_save = True
         result = self.sync().update_progress(PROGRESS_BOOK, SG_URL)

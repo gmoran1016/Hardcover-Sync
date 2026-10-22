@@ -444,11 +444,12 @@ class StorygraphSync:
             return False
 
     def _find_track_progress_button(self):
-        """Return the track-progress button element, or None if not found.
+        """Return a visible, enabled track-progress button, or None.
 
         Tries several selectors in order because StoryGraph has renamed this
-        button at least once (edit-progress → track-progress). Also falls back
-        to text-content matching in case the class changes again.
+        button at least once (edit-progress → track-progress). StoryGraph may
+        render hidden responsive duplicates, so only usable buttons are returned.
+        Also falls back to text-content matching in case the class changes again.
         """
         result = self.driver.execute_script("""
             var selectors = [
@@ -456,13 +457,20 @@ class StorygraphSync:
                 'button.track-progress-button',
                 'button.edit-progress-button',
             ];
+            var isUsable = function(button) {
+                var style = window.getComputedStyle(button);
+                return !button.disabled
+                    && button.getClientRects().length > 0
+                    && style.visibility !== 'hidden'
+                    && !button.closest('[aria-hidden="true"]');
+            };
             for (var sel of selectors) {
-                var btns = document.querySelectorAll(sel);
-                if (btns.length > 0) return btns[0];
+                var btn = Array.from(document.querySelectorAll(sel)).find(isUsable);
+                if (btn) return btn;
             }
             // Text-content fallback
-            var all = document.querySelectorAll('button');
-            for (var b of all) {
+            for (var b of document.querySelectorAll('button')) {
+                if (!isUsable(b)) continue;
                 var t = b.textContent.toLowerCase().trim();
                 if (t.includes('edit') && t.includes('progress')) return b;
                 if (t.includes('track') && t.includes('progress')) return b;
