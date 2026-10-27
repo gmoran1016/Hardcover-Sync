@@ -293,6 +293,20 @@ class StorygraphSync:
             self.driver.get(target_url)
             time.sleep(4)
 
+            # StoryGraph can match an audiobook or print edition even when the
+            # user's active read is attached to a sibling edition. In that case
+            # the matched page has no progress editor, but StoryGraph links the
+            # edition that is currently being read.
+            active_edition_url = self._currently_reading_edition_url()
+            if active_edition_url and active_edition_url != target_url:
+                logger.info(
+                    "StoryGraph has this title currently on another edition; "
+                    "updating the active edition"
+                )
+                target_url = active_edition_url
+                self.driver.get(target_url)
+                time.sleep(4)
+
             if self._do_update_progress(pages, pct, total):
                 # A closed editor is not a durable acknowledgement.  Reload the
                 # identified book and compare the provider's persisted fields.
@@ -513,8 +527,35 @@ class StorygraphSync:
             By.CSS_SELECTOR, "input#read_status_progress_number"
         ):
             if progress_input.is_displayed():
-                form = progress_input.find_element(By.XPATH, "./ancestor::form[1]")
-                return form, progress_input
+                try:
+                    editor = progress_input.find_element(
+                        By.XPATH, "./ancestor::form[1]"
+                    )
+                except NoSuchElementException:
+                    # StoryGraph's current progress widget is an AJAX panel,
+                    # not a native form. Keep all related controls scoped to
+                    # that panel, which is duplicated for desktop and mobile.
+                    editor = progress_input.find_element(
+                        By.XPATH,
+                        "./ancestor::*[contains(concat(' ', normalize-space(@class), ' '), "
+                        "' progress-tracking-form ')][1]",
+                    )
+                return editor, progress_input
+        return None
+
+    def _currently_reading_edition_url(self) -> str | None:
+        """Return StoryGraph's linked sibling edition when the read is there."""
+        for link in self.driver.find_elements(
+            By.CSS_SELECTOR, 'a[href*="/books/"]'
+        ):
+            if not link.is_displayed():
+                continue
+            label = " ".join((link.text or "").casefold().split())
+            if "currently reading another edition" not in label:
+                continue
+            return canonical_book_url(
+                "storygraph", link.get_attribute("href")
+            )
         return None
 
     def _progress_unit_ready(self, form, progress_input, unit_select, unit) -> bool:
@@ -716,7 +757,9 @@ class StorygraphSync:
                 "return arguments[0].checkValidity();", progress_input
             )
             form_valid = self.driver.execute_script(
-                "return arguments[0].checkValidity();", form
+                "return typeof arguments[0].checkValidity !== 'function' "
+                "|| arguments[0].checkValidity();",
+                form,
             )
             if not input_valid or not form_valid:
                 message = self.driver.execute_script(

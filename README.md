@@ -166,7 +166,7 @@ The first lines should appear immediately, before any network requests:
 ```text
 [hardcover-sync-entrypoint] container starting
 [hardcover-sync-entrypoint] virtual display is ready
-Hardcover Sync v2.1.8 starting
+Hardcover Sync v2.1.9 starting
 ```
 
 If those entrypoint lines do not appear, Unraid is running an old image or has
@@ -300,6 +300,8 @@ Version 2.1.7 uses a native browser click to open StoryGraph's progress editor,
 with a JavaScript click fallback when the control is obstructed.
 Version 2.1.8 keeps the DOM-click fallback for wrapped controls that do not
 expose Selenium's native click method.
+Version 2.1.9 follows StoryGraph's active edition when the mapped result is a
+sibling edition and supports StoryGraph's form-free progress panel.
 
 ### Docker: Chrome crashes
 Keep `shm_size: "256mb"` in your compose file (or `--shm-size=256m` in
