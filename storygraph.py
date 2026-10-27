@@ -631,17 +631,26 @@ class StorygraphSync:
                 "arguments[0].scrollIntoView({block: 'center', inline: 'nearest'});",
                 track_btn,
             )
-            try:
-                track_btn.click()
-                logger.debug("Opened StoryGraph progress editor with WebDriver click")
-            except (
-                ElementClickInterceptedException,
-                ElementNotInteractableException,
-            ) as exc:
+            native_click = getattr(track_btn, "click", None)
+            if callable(native_click):
+                try:
+                    native_click()
+                    logger.debug(
+                        "Opened StoryGraph progress editor with WebDriver click"
+                    )
+                except (
+                    ElementClickInterceptedException,
+                    ElementNotInteractableException,
+                ) as exc:
+                    logger.debug(
+                        "StoryGraph progress button rejected native click (%s); "
+                        "falling back to DOM click",
+                        type(exc).__name__,
+                    )
+                    self.driver.execute_script("arguments[0].click();", track_btn)
+            else:
                 logger.debug(
-                    "StoryGraph progress button rejected native click (%s); "
-                    "falling back to DOM click",
-                    type(exc).__name__,
+                    "Progress control has no native click method; using DOM click"
                 )
                 self.driver.execute_script("arguments[0].click();", track_btn)
             time.sleep(1)
