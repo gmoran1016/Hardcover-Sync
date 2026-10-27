@@ -21,7 +21,12 @@ from urllib.parse import quote_plus
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select, WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import (
+    ElementClickInterceptedException,
+    ElementNotInteractableException,
+    NoSuchElementException,
+    TimeoutException,
+)
 
 from cookie_bundle import load_cookie_bundle
 from driver import create_driver, set_user_agent
@@ -619,17 +624,26 @@ class StorygraphSync:
                     logger.error("Track progress button never appeared after shelving")
                     return False
 
-            # JS-click the track progress button to open the inline form
-            clicked = self.driver.execute_script(
-                """
-                var btn = arguments[0];
-                btn.scrollIntoView(true);
-                btn.click();
-                return btn.offsetParent !== null ? 'visible' : 'hidden';
-            """,
+            # Use a native WebDriver click so StoryGraph receives the same
+            # pointer/mouse event sequence as a real user. Keep a DOM-click
+            # fallback for layouts where another element intercepts the click.
+            self.driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center', inline: 'nearest'});",
                 track_btn,
             )
-            logger.debug("track-progress-button click result: %s", clicked)
+            try:
+                track_btn.click()
+                logger.debug("Opened StoryGraph progress editor with WebDriver click")
+            except (
+                ElementClickInterceptedException,
+                ElementNotInteractableException,
+            ) as exc:
+                logger.debug(
+                    "StoryGraph progress button rejected native click (%s); "
+                    "falling back to DOM click",
+                    type(exc).__name__,
+                )
+                self.driver.execute_script("arguments[0].click();", track_btn)
             time.sleep(1)
 
             request = self._progress_request(pages, pct)

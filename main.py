@@ -32,7 +32,7 @@ from sync_state import (
     recover_state,
 )
 
-VERSION = "2.1.6"
+VERSION = "2.1.7"
 
 if hasattr(sys.stdout, "reconfigure"):
     try:

@@ -166,7 +166,7 @@ The first lines should appear immediately, before any network requests:
 ```text
 [hardcover-sync-entrypoint] container starting
 [hardcover-sync-entrypoint] virtual display is ready
-Hardcover Sync v2.1.1 starting
+Hardcover Sync v2.1.7 starting
 ```
 
 If those entrypoint lines do not appear, Unraid is running an old image or has
@@ -296,6 +296,8 @@ Version 2.1.6 retains all Hardcover author contributions when matching Goodreads
 and StoryGraph books. This handles Goodreads results that list Robert Jordan for
 *The Gathering Storm* while Hardcover also credits Brandon Sanderson, without
 allowing candidates with no matching author.
+Version 2.1.7 uses a native browser click to open StoryGraph's progress editor,
+with a JavaScript click fallback when the control is obstructed.
 
 ### Docker: Chrome crashes
 Keep `shm_size: "256mb"` in your compose file (or `--shm-size=256m` in
