@@ -545,17 +545,13 @@ class StorygraphSync:
 
     def _currently_reading_edition_url(self) -> str | None:
         """Return StoryGraph's linked sibling edition when the read is there."""
-        for link in self.driver.find_elements(
-            By.CSS_SELECTOR, 'a[href*="/books/"]'
-        ):
+        for link in self.driver.find_elements(By.CSS_SELECTOR, 'a[href*="/books/"]'):
             if not link.is_displayed():
                 continue
             label = " ".join((link.text or "").casefold().split())
             if "currently reading another edition" not in label:
                 continue
-            return canonical_book_url(
-                "storygraph", link.get_attribute("href")
-            )
+            return canonical_book_url("storygraph", link.get_attribute("href"))
         return None
 
     def _progress_unit_ready(self, form, progress_input, unit_select, unit) -> bool:
